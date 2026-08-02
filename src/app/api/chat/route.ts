@@ -25,6 +25,7 @@ import {
   getAnnouncements as getICAnnouncements,
 } from '@/lib/infinite-campus'
 import { RecoveryManager } from '@/lib/recovery/recovery-manager'
+import { buildFinishMetadata } from '@/lib/recovery/finish-metadata'
 // Side-effect import: registers enryReceiptsDetector as the active
 // ReceiptsHook at module-load time, before this route's first
 // getReceiptsHook() call below. Order matters — must precede any code
@@ -518,6 +519,11 @@ export async function POST(req: Request) {
 
     return skillResult.toUIMessageStreamResponse({
       headers: Object.keys(responseHeaders).length > 0 ? responseHeaders : undefined,
+      // Stamp the finish reason onto the message so the client can tell a
+      // completed turn from one the provider truncated. Without this a
+      // `length` finish is indistinguishable from a clean `stop`.
+      messageMetadata: ({ part }) =>
+        part.type === 'finish' ? buildFinishMetadata(part.finishReason) : undefined,
       onError: (error) => safeStreamErrorMessage(error, 'chat route multi-skill error'),
     })
   }
@@ -971,7 +977,14 @@ export async function POST(req: Request) {
     onError: ({ error }) => {
       console.error('streamText error:', error)
     },
-    onFinish: async ({ usage }) => {
+    onFinish: async ({ usage, finishReason }) => {
+      // A non-clean finish reason here is the silent-truncation case: the
+      // request did NOT throw, so onError never fires, but the model
+      // stopped before it was done. Log it so the cutoff is traceable
+      // server-side; the client learns about it via messageMetadata below.
+      if (finishReason !== 'stop' && finishReason !== 'tool-calls') {
+        console.warn(`[chat] stream finished early — finishReason=${finishReason} model=${selectedModel} cap=${usingTools ? modelToolTurnOutputTokens : modelMaxOutputTokens}`)
+      }
       // Usage observability — resilient, never breaks the response. Runs
       // after the full multi-step stream completes; usage is accumulated
       // across tool-calling steps by the SDK.
@@ -991,6 +1004,10 @@ export async function POST(req: Request) {
 
   return result.toUIMessageStreamResponse({
     headers: compacted ? { 'X-Context-Compacted': 'true', 'X-Context-Compacted-Summary': encodeURIComponent(compactionSummary ?? '') } : undefined,
+    // See the multi-skill path above — this is what makes a truncated
+    // response visible to the user instead of silently ending.
+    messageMetadata: ({ part }) =>
+      part.type === 'finish' ? buildFinishMetadata(part.finishReason) : undefined,
     onError: (error) => safeStreamErrorMessage(error, 'chat route error'),
   })
 }

@@ -43,7 +43,9 @@ import { GolemInline } from './golem/golem-inline'
 import { onGolemQuickAction, pulseGolem, setGolemModel, setGolemSeekTarget } from '@/lib/golem-signals'
 import { getDailySuggestionCards, type SuggestionCard } from '@/lib/suggestion-cards'
 import { RecoveryBanner } from './recovery-banner'
+import { InterruptedNotice } from './interrupted-notice'
 import { RecoveryState } from '@/lib/recovery/types'
+import { readFinishMetadata } from '@/lib/recovery/finish-metadata'
 import { SkillBanner } from './skill-banner'
 import { CompactionIndicator } from './compaction-indicator'
 import { ThinkingTrace } from './thinking-trace'
@@ -105,6 +107,12 @@ function getTextContent(message: UIMessage): string {
     .map((p) => p.text)
     .join('')
 }
+
+/**
+ * How many times the client auto-retries a continuation before giving up
+ * and showing the user a Retry button instead of a spinner.
+ */
+const MAX_AUTO_RECOVERIES = 2
 
 function getSources(message: UIMessage): SourceUrlUIPart[] {
   return message.parts.filter((p): p is SourceUrlUIPart => p.type === 'source-url')
@@ -377,6 +385,8 @@ export function CenterPanel({
   const [recoveryState, setRecoveryState] = useState<RecoveryState | null>(null)
   const recoveryStateRef = useRef<RecoveryState | null>(null)
   const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Bounds the auto-recovery loop in onError — see the comment there.
+  const recoveryAttemptsRef = useRef(0)
 
   // Keep ref in sync — useChat callbacks see stale closures
   useEffect(() => { recoveryStateRef.current = recoveryState }, [recoveryState])
@@ -407,6 +417,8 @@ export function CenterPanel({
       if (recoveryStateRef.current === RecoveryState.Recovering) {
         setRecoveryState(RecoveryState.Recovered)
       }
+      // A clean finish means the failure streak is over.
+      recoveryAttemptsRef.current = 0
     },
     onError: (err) => {
       console.error('[chat] streamText error:', err)
@@ -417,10 +429,22 @@ export function CenterPanel({
       // ── Auto-recovery ──────────────────────────────────────────
       // If the last message is an incomplete assistant response,
       // attempt to recover by sending a continuation request.
+      //
+      // Bounded: previously this re-sent on every onError, so an error
+      // that reproduces on the continuation request (a persistently
+      // failing provider) recovered → errored → recovered forever, and
+      // the user saw a permanent "Recovering…" spinner instead of being
+      // told the response was cut off. After MAX_AUTO_RECOVERIES the
+      // state goes to Failed, which renders a Retry button.
       const lastMsg = messagesRef.current[messagesRef.current.length - 1]
       if (lastMsg?.role === 'assistant') {
         const partialContent = getTextContent(lastMsg)
         if (partialContent && partialContent.length > 0) {
+          if (recoveryAttemptsRef.current >= MAX_AUTO_RECOVERIES) {
+            setRecoveryState(RecoveryState.Failed)
+            return
+          }
+          recoveryAttemptsRef.current += 1
           setRecoveryState(RecoveryState.Recovering)
           // Re-send with recovery flag + partial content for continuation
           sendMessage({ text: '' }, {
@@ -434,6 +458,10 @@ export function CenterPanel({
               partialContent,
             },
           })
+        } else {
+          // Nothing partial to continue from — the turn produced no text
+          // at all. Surface it rather than silently doing nothing.
+          setRecoveryState(RecoveryState.Failed)
         }
       }
     },
@@ -799,6 +827,45 @@ export function CenterPanel({
   const currentChatEffort = CHAT_EFFORTS.find((e) => e.id === chatEffort)
   const isStreaming = status === 'streaming' || status === 'submitted'
 
+  // ── Interrupted-stream recovery actions ──────────────────────────
+  // `continueFrom` resumes: the partial text is handed back to the route,
+  // which prepends a continuation directive so the model picks up mid-
+  // sentence rather than restarting. The partial output stays on screen —
+  // a truncated answer is usually most of an answer, and throwing it away
+  // to show an error would be a worse outcome than the bug being fixed.
+  const continueFrom = useCallback((partialContent: string) => {
+    if (!partialContent) return
+    sendMessage({ text: '' }, {
+      body: {
+        model,
+        effort: chatEffort,
+        focusMode,
+        sessionFocus: serializeSessionFocus(sessionFocus),
+        reasoningDepth,
+        recovery: true,
+        partialContent,
+      },
+    })
+  }, [sendMessage, model, chatEffort, focusMode, sessionFocus, reasoningDepth])
+
+  // `retryTurn` regenerates from scratch — used when the interrupted turn
+  // produced nothing usable, or the user would rather have a fresh answer.
+  const retryTurn = useCallback(() => {
+    const lastUser = [...messagesRef.current].reverse().find((m) => m.role === 'user')
+    if (!lastUser) return
+    const text = getTextContent(lastUser)
+    if (!text) return
+    sendMessage({ text }, {
+      body: {
+        model,
+        effort: chatEffort,
+        focusMode,
+        sessionFocus: serializeSessionFocus(sessionFocus),
+        reasoningDepth,
+      },
+    })
+  }, [sendMessage, model, chatEffort, focusMode, sessionFocus, reasoningDepth])
+
   // Auto-flush queued messages when the stream settles back to ready.
   // sendMessage is stable per the AI SDK, safe as a dep.
   const sendMessageRef = useRef(sendMessage)
@@ -1043,6 +1110,18 @@ export function CenterPanel({
                     : { ...parseReasoningTrace(text), isThinking: false })
                 : { reasoning: null, answer: text, isThinking: false }
               const displayAnswer = isAssistant ? cleanAnswer : text
+              // ── Interrupted-stream detection ─────────────────────
+              // Reads the finish metadata the /api/chat route stamps on
+              // every assistant message. This is deliberately independent
+              // of the error path: the common silent cutoff (hitting
+              // maxOutputTokens) never throws, so `error`/onError see
+              // nothing. Skipped for the message still streaming — it
+              // hasn't got a finish chunk yet and isn't cut off, just
+              // unfinished.
+              const interruption = isAssistant && !isCurrentStream
+                ? readFinishMetadata(message.metadata, displayAnswer.trim().length > 0)
+                : { interrupted: false, label: '' }
+              const isLastMessage = index === messages.length - 1
               return (
                 <motion.div
                   key={message.id}
@@ -1081,6 +1160,23 @@ export function CenterPanel({
                         </p>
                       )}
                     </div>
+                    {/* Visible interrupted state — the guarantee that a
+                        stream ending early is never silent. Continue is only
+                        offered on the newest message (resuming an older turn
+                        would append to the wrong place) and only when there
+                        is partial text worth resuming from. */}
+                    {interruption.interrupted && (
+                      <InterruptedNotice
+                        label={interruption.label}
+                        busy={isStreaming}
+                        onContinue={
+                          isLastMessage && displayAnswer.trim().length > 0
+                            ? () => continueFrom(displayAnswer)
+                            : undefined
+                        }
+                        onRetry={isLastMessage ? retryTurn : undefined}
+                      />
+                    )}
                     {message.role === 'assistant' && sources.length > 0 && (
                       <div className="mt-2">
                         <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
