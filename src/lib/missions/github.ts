@@ -172,7 +172,7 @@ export async function proposeChanges(input: ProposeChangesInput): Promise<Propos
   )
   if (pr.error || !pr.pr) throw new GitHubScopeError(`opening PR: ${pr.error ?? 'no pr returned'}`)
 
-  return { branch: input.branch, branchCreated: branch.created, commitSha: commit.commitSha, pr }
+  return { branch: input.branch, branchCreated: branch.created, commitSha: commit.commitSha, pr: pr.pr }
 }
 
 export interface CommentInput extends RepoTarget {
