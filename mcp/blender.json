@@ -13,7 +13,11 @@
     "  claude --mcp-config mcp/servers.json --mcp-config mcp/blender.json ...",
     "",
     "For unattended asset generation use src/lib/assets/blender.ts instead, which runs",
-    "blender --background and needs no display, no add-on and no human."
+    "blender --background and needs no display, no add-on and no human. That path reads",
+    "BLENDER_BIN from the environment — it never hardcodes an install path, so upgrading",
+    "Blender is a symlink flip at $HOME/.local/opt/blender and nothing here changes.",
+    "Install or upgrade it with: node --import ./scripts/missions-loader.mjs",
+    "--experimental-strip-types ./scripts/install-blender.mjs"
   ],
   "mcpServers": {
     "blender": {
