@@ -28,6 +28,7 @@ import {
   diffSignatures,
   type WorktreeDelta,
 } from '@/lib/terminal/headless-run'
+import { withMcp, type McpServerName } from './mcp'
 import { getTask, listAgents, recordEvent, recordResult, updateTaskStatus } from './store'
 import type { Agent, Task, TaskResult } from './types'
 
@@ -63,6 +64,12 @@ export interface RunBuilderTaskOptions {
    * work (a review, an analysis) where no diff is the correct outcome.
    */
   expectsWrite?: boolean
+  /**
+   * MCP servers to hand this builder. Only agents whose CLI takes a per-run
+   * config get them; the rest run without and the skip is recorded rather than
+   * hidden. See mcp.ts.
+   */
+  mcpServers?: McpServerName[]
 }
 
 export interface RunBuilderTaskResult {
@@ -77,6 +84,8 @@ export interface RunBuilderTaskResult {
   sessionId: string
   /** What the run did to the checkout. */
   worktree: WorktreeDelta
+  /** Which MCP servers the builder actually got, and why not, if it got none. */
+  mcp: { servers: McpServerName[]; skipped: string | null }
 }
 
 /**
@@ -122,8 +131,10 @@ export async function runBuilderTask(
   // prompt, because the prompt flag is NOT universal: claude and gemini take
   // -p, hermes takes -z, and opencode takes `run <message>` while its own -p
   // means --password. Hardcoding -p here silently mis-invoked half the roster.
+  const mcp = withMcp(agent.cliCommand, options.mcpServers ?? [])
+
   const before = await worktreeSignature(options.cwd)
-  const run = await runHeadless(`${agent.cliCommand} ${base64Arg(prompt)}`, {
+  const run = await runHeadless(`${mcp.command} ${base64Arg(prompt)}`, {
     timeoutMs,
     runId: taskId,
     sessionId: options.sessionId,
@@ -151,6 +162,17 @@ export async function runBuilderTask(
           ? null
           : `${agent.cliCommand} exited ${exitCode}`
 
+  // A builder silently running without the tools it was meant to have would
+  // look exactly like a builder that chose not to use them, so record either way.
+  if (options.mcpServers?.length) {
+    await recordEvent(
+      task.missionId,
+      'task.mcp',
+      { requested: options.mcpServers, granted: mcp.servers, skipped: mcp.skipped, agent: agent.name },
+      taskId,
+    )
+  }
+
   await recordEvent(
     task.missionId,
     'task.worktree',
@@ -176,5 +198,6 @@ export async function runBuilderTask(
     timedOut,
     sessionId: run.sessionId,
     worktree: delta,
+    mcp: { servers: mcp.servers, skipped: mcp.skipped },
   }
 }

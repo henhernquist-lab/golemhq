@@ -11,6 +11,7 @@
 // acquires or checks it.
 
 import { runBuilderTask } from './adapter'
+import type { McpServerName } from './mcp'
 import { backend } from '@/lib/terminal/headless-run'
 import {
   getDetections,
@@ -58,6 +59,12 @@ export interface ScheduleOptions {
   timeoutMs?: number
   /** Assign but do not execute. Useful for inspecting choices. */
   dryRun?: boolean
+  /**
+   * MCP servers to offer every builder this run. Agents whose CLI cannot take
+   * a per-run config run without them — see mcp.ts for why that is a property
+   * of the CLI and not something the scheduler can work around.
+   */
+  mcpServers?: McpServerName[]
 }
 
 export interface ScheduledTask {
@@ -259,7 +266,11 @@ export async function scheduleTasks(
     let durationMs: number | null = null
     let error: string | null = null
     try {
-      const run = await runBuilderTask(task.id, { cwd: options.cwd, timeoutMs: options.timeoutMs })
+      const run = await runBuilderTask(task.id, {
+        cwd: options.cwd,
+        timeoutMs: options.timeoutMs,
+        mcpServers: options.mcpServers,
+      })
       success = run.result.success
       exitCode = run.exitCode
       durationMs = run.durationMs

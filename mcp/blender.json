@@ -1,0 +1,25 @@
+{
+  "_comment": [
+    "Interactive Blender only. This is ahujasid/blender-mcp, the community standard:",
+    "an add-on inside a RUNNING Blender GUI opens a socket on localhost:9876, and this",
+    "server bridges MCP calls to it.",
+    "",
+    "Prerequisites, none of which a build host has: Blender installed with a display,",
+    "the addon.py from the blender-mcp repo installed via Edit > Preferences > Add-ons,",
+    "and 'Connect to MCP server' pressed in the 3D viewport's BlenderMCP sidebar tab.",
+    "",
+    "It is kept OUT of servers.json on purpose — a server that cannot connect turns",
+    "every builder run into a startup failure. Pass it explicitly when Blender is up:",
+    "  claude --mcp-config mcp/servers.json --mcp-config mcp/blender.json ...",
+    "",
+    "For unattended asset generation use src/lib/assets/blender.ts instead, which runs",
+    "blender --background and needs no display, no add-on and no human."
+  ],
+  "mcpServers": {
+    "blender": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["blender-mcp"]
+    }
+  }
+}
