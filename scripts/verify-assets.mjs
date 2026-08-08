@@ -1,7 +1,7 @@
 // Verification path for 3D asset generation (Batch 4.5, Parts 2 and 3).
 //
 // Generates a real .glb with headless Blender and validates the container, then
-// reports whether Meshy is reachable. Nothing here trusts an exit code: the
+// reports whether Tripo3D is reachable. Nothing here trusts an exit code: the
 // proof is a parsed glTF with the expected mesh and material inside it.
 //
 // Run:
@@ -12,7 +12,7 @@
 // Env:
 //   BLENDER_BIN=<path>   Blender executable (portable build is fine)
 //   OUT=<path>           where to write the .glb (default public/assets/golem-cube.glb)
-//   MESHY_PROMPT=<text>  run a real Meshy generation too (costs free-tier credits)
+//   TRIPO_PROMPT=<text>  run a real Tripo3D generation too (costs credits)
 
 import { readFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
@@ -28,7 +28,7 @@ try {
 }
 
 const blender = await import('../src/lib/assets/blender.ts')
-const meshy = await import('../src/lib/assets/meshy.ts')
+const tripo = await import('../src/lib/assets/tripo.ts')
 
 const OUT = resolve(process.env.OUT ?? 'public/assets/golem-cube.glb')
 const ok = (m) => console.log(`  ✓ ${m}`)
@@ -86,22 +86,30 @@ try {
   if (bad.valid) throw new Error('inspectGlb accepted a truncated file')
   ok(`truncation is detected, not ignored: ${bad.error}`)
 
-  // ── Meshy ────────────────────────────────────────────────────────
-  console.log('\nMESHY')
-  if (!meshy.meshyConfigured()) {
-    no('MESHY_API_KEY is not set — text-to-3D is BLOCKED pending a key from https://www.meshy.ai/api')
-    info('endpoint shapes were confirmed separately: all three answer 401, not 404')
-  } else if (process.env.MESHY_PROMPT) {
-    const { task, glb: bytes } = await meshy.generateGlbFromText(process.env.MESHY_PROMPT, {
-      onProgress: (t) => info(`${t.status} ${t.progress}%`),
-    })
-    const meshyOut = resolve('public/assets/meshy-generated.glb')
-    await writeFile(meshyOut, bytes)
-    const info2 = await blender.inspectGlb(meshyOut)
-    if (!info2.valid) throw new Error(`Meshy returned an invalid .glb: ${info2.error}`)
-    ok(`task ${task.id} → ${info2.bytes} bytes, meshes: ${info2.meshes.join(', ')}`)
+  // ── Tripo3D ──────────────────────────────────────────────────────
+  console.log('\nTRIPO3D')
+  if (!tripo.tripoConfigured()) {
+    no('TRIPO_API_KEY is not set — text-to-3D is BLOCKED pending a key from https://platform.tripo3d.ai')
+    info('endpoint shapes confirmed: /task and /user/balance answer 401 with Tripo\'s own envelope, not 404')
   } else {
-    ok('MESHY_API_KEY is set — re-run with MESHY_PROMPT="..." to spend a credit and generate')
+    const credits = await tripo.balance()
+    ok(`authenticated — balance ${credits.balance} (frozen ${credits.frozen})`)
+    if (process.env.TRIPO_PROMPT) {
+      const out = resolve('public/assets/tripo-generated.glb')
+      // generateGlbFromText validates the container itself and throws on a
+      // truncated or non-glTF download, so reaching the next line already
+      // means the bytes are a real model.
+      const { task, info: glbInfo } = await tripo.generateGlbFromText(process.env.TRIPO_PROMPT, {
+        onProgress: (t) => info(`${t.status} ${t.progress}%`),
+        outPath: out,
+      })
+      ok(`task ${task.id} → ${glbInfo.bytes} bytes at ${out}`)
+      info(`meshes:    ${glbInfo.meshes.join(', ') || '(unnamed)'}`)
+      info(`materials: ${glbInfo.materials.join(', ') || '(none)'}`)
+      ok('downloaded model parsed as valid glTF with a matching declared length')
+    } else {
+      ok('set TRIPO_PROMPT="..." to spend a credit and generate a real model')
+    }
   }
 
   console.log('\n✓ asset generation verified\n')

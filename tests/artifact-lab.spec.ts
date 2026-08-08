@@ -24,13 +24,35 @@ test.describe('artifact lab', () => {
     const failures: string[] = []
     page.on('pageerror', (e) => failures.push(e.message))
 
+    // Auth is a precondition, not part of what this test is measuring. If it
+    // fails, say so in those words — a bad password otherwise surfaces further
+    // down as "canvas never became ready", which reads like a render bug and
+    // sends you looking in entirely the wrong place.
     await page.goto('/login')
     await page.getByPlaceholder('email').fill(EMAIL!)
     await page.getByPlaceholder('password').fill(PASSWORD!)
     await page.getByRole('button', { name: /sign in|log in|continue/i }).first().click()
-    await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
+    try {
+      await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
+    } catch {
+      const visible = await page.locator('body').innerText()
+      const message = visible.split('\n').find((l) => /invalid|incorrect|error|failed|not found/i.test(l))
+      throw new Error(
+        `AUTH FAILED — still on ${page.url()} after submitting E2E_EMAIL=${EMAIL}. ` +
+          `This is a credentials problem, not a rendering problem. ` +
+          `Page said: ${message ?? '(no error text found on the page)'}`,
+      )
+    }
 
     await page.goto('/atelier/lab')
+    // Landing back on /login means the session did not stick (e.g. the account
+    // authenticated but is not the owner the route gate requires).
+    if (new URL(page.url()).pathname.startsWith('/login')) {
+      throw new Error(
+        `AUTH INSUFFICIENT — signed in, but /atelier/lab redirected back to /login. ` +
+          `The account likely is not the owner (profiles.email must match OWNER_EMAIL).`,
+      )
+    }
 
     const canvas = page.locator('canvas')
     await expect(canvas).toBeVisible()
