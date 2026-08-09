@@ -20,10 +20,13 @@
 // this one.
 
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { randomUUID } from 'node:crypto'
+
+import { backend, base64Arg, runHeadless } from '@/lib/terminal/headless-run'
 
 const execFileAsync = promisify(execFile)
 
@@ -50,7 +53,46 @@ export function blenderBinary(): string {
   return process.env.BLENDER_BIN?.trim() || 'blender'
 }
 
+// ─── Which machine Blender runs on ─────────────────────────────────────
+//
+// On Vercel there is no Blender to spawn and no way to put one there: the
+// lambda filesystem is read-only apart from /tmp, the bundle has a hard size
+// cap, and a 1GB portable build clears neither. Blender lives on the Fly
+// Sprite, which is also where builder tasks run, so asset generation goes
+// through the same exec path they do — see src/lib/terminal/headless-run.ts.
+//
+// This module used to call execFile unconditionally. That worked in the
+// Codespace and could never have worked in production, which is exactly the
+// kind of gap a Codespace-only verification does not surface: installing
+// Blender on the Sprite fixes nothing until the caller actually talks to it.
+//
+// The Sprite's own shell exports BLENDER_BIN (see scripts/install-blender.mjs),
+// so the remote command reads the REMOTE env rather than the lambda's.
+const REMOTE_BLENDER = '"${BLENDER_BIN:-$HOME/.local/opt/blender/blender}"'
+
+/** Cap on a file carried back from the Sprite (base64 inflates it by 4/3). */
+const MAX_TRANSFER_BYTES = 24 * 1024 * 1024
+
+const B64_BEGIN = '__GOLEM_B64_BEGIN__'
+const B64_END = '__GOLEM_B64_END__'
+
+function onSprite(): boolean {
+  return backend().kind === 'sprite'
+}
+
 export async function blenderAvailable(): Promise<{ available: boolean; version: string | null }> {
+  if (onSprite()) {
+    try {
+      const run = await runHeadless(`${REMOTE_BLENDER} --version | head -1`, {
+        timeoutMs: 120_000,
+        runId: `blender-version-${randomUUID()}`,
+      })
+      const version = run.output.split('\n').map((l) => l.trim()).find((l) => /^Blender \d/.test(l))
+      return { available: run.exitCode === 0 && !!version, version: version ?? null }
+    } catch {
+      return { available: false, version: null }
+    }
+  }
   try {
     const { stdout } = await execFileAsync(blenderBinary(), ['--version'], { timeout: 30_000 })
     return { available: true, version: stdout.split('\n')[0]?.trim() ?? null }
@@ -81,6 +123,8 @@ export async function runBlenderScript(
   python: string,
   options: { outPath: string; timeoutMs?: number } ,
 ): Promise<BlenderRunResult> {
+  if (onSprite()) return runBlenderScriptOnSprite(python, options)
+
   const { available, version } = await blenderAvailable()
   if (!available) {
     throw new BlenderError(
@@ -121,6 +165,104 @@ export async function runBlenderScript(
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+}
+
+/**
+ * The same run, on the Sprite, with the artefact carried back.
+ *
+ * Sprites' API exposes no file transfer, so the exported file returns as base64
+ * inside the exec stream between two markers. That is only tolerable because
+ * the payloads here are small — a cube is ~2KB, a render is a few hundred KB —
+ * and it is capped rather than trusted. Anything genuinely large should be
+ * uploaded to storage from the Sprite instead of being funnelled through a TTY.
+ *
+ * Both halves of the script are delivered base64-encoded: a Blender script is
+ * full of quotes, backticks and newlines, and any of them typed raw at an
+ * interactive shell becomes several commands instead of one.
+ */
+async function runBlenderScriptOnSprite(
+  python: string,
+  options: { outPath: string; timeoutMs?: number },
+): Promise<BlenderRunResult> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_BLENDER_TIMEOUT_MS
+  const work = `/tmp/golem-blender-${randomUUID()}`
+  const remoteOut = `${work}/out${extensionOf(options.outPath)}`
+  const started = Date.now()
+
+  const script = `
+set -e
+mkdir -p ${work}
+printf %s ${Buffer.from(python, 'utf8').toString('base64')} | base64 -d > ${work}/generate.py
+${REMOTE_BLENDER} --background --factory-startup --python-exit-code 1 \\
+  --python ${work}/generate.py -- ${remoteOut}
+# Blender exits 0 for a script that ran and exported nothing, so the file is
+# the success signal — same lesson as the local path above.
+if [ ! -s ${remoteOut} ]; then echo "__GOLEM_NO_OUTPUT__"; exit 3; fi
+echo "__GOLEM_BYTES__ $(stat -c %s ${remoteOut})"
+echo "${B64_BEGIN}"
+base64 ${remoteOut}
+echo "${B64_END}"
+rm -rf ${work}
+`.trim()
+
+  const run = await runHeadless(`bash -c ${base64Arg(script)}`, {
+    timeoutMs,
+    runId: `blender-run-${randomUUID()}`,
+  })
+
+  if (run.failure) throw new BlenderError(`Sprite exec failed: ${run.failure}`)
+  if (run.timedOut) throw new BlenderError(`Blender timed out after ${timeoutMs}ms on the Sprite`)
+  if (run.output.includes('__GOLEM_NO_OUTPUT__')) {
+    throw new BlenderError(
+      `Blender exited cleanly on the Sprite but wrote no file — the script ran and exported nothing`,
+      tail(run.output),
+    )
+  }
+  if (run.exitCode !== 0) {
+    throw new BlenderError(`Blender script failed on the Sprite (exit ${run.exitCode})`, tail(run.output))
+  }
+
+  const begin = run.output.indexOf(B64_BEGIN)
+  const end = run.output.indexOf(B64_END)
+  if (begin === -1 || end === -1 || end < begin) {
+    throw new BlenderError('the Sprite produced a file but its transfer markers never arrived', tail(run.output))
+  }
+  // Whitespace-strip rather than line-split: base64's own wrapping, the TTY's
+  // CRLF translation and the shell's echo all put breaks in different places,
+  // and none of them are part of the payload.
+  const payload = run.output.slice(begin + B64_BEGIN.length, end).replaceAll(/\s+/g, '')
+  const buf = Buffer.from(payload, 'base64')
+
+  const declared = Number(/__GOLEM_BYTES__ (\d+)/.exec(run.output)?.[1] ?? NaN)
+  if (Number.isFinite(declared) && declared !== buf.byteLength) {
+    throw new BlenderError(
+      `transfer from the Sprite lost data: ${declared} bytes on the Sprite, ${buf.byteLength} decoded here`,
+    )
+  }
+  if (buf.byteLength > MAX_TRANSFER_BYTES) {
+    throw new BlenderError(`artefact is ${buf.byteLength} bytes, over the ${MAX_TRANSFER_BYTES}-byte transfer cap`)
+  }
+
+  await mkdir(dirname(options.outPath), { recursive: true })
+  await writeFile(options.outPath, buf)
+
+  return {
+    glbPath: options.outPath,
+    bytes: buf.byteLength,
+    stdout: run.output.slice(0, begin),
+    durationMs: Date.now() - started,
+  }
+}
+
+function extensionOf(path: string): string {
+  const base = path.slice(path.lastIndexOf('/') + 1)
+  const dot = base.lastIndexOf('.')
+  return dot > 0 ? base.slice(dot) : '.glb'
+}
+
+/** Blender is loud; only the end of its output says why it failed. */
+function tail(output: string): string {
+  return output.slice(-2000)
 }
 
 // ─── Validation ────────────────────────────────────────────────────────
