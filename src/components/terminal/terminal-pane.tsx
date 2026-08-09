@@ -49,6 +49,12 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
   // echoes them back, so typing looks like it is going nowhere. Without this
   // the state is completely invisible; see the SSE handlers below.
   const [streamDown, setStreamDown] = useState(false)
+  // Set when a reconnect replayed a backlog that had been trimmed at the front.
+  // That replay can leave a live terminal showing nothing (see the 'backlog'
+  // handler), so the pane offers an explicit way out instead of leaving the
+  // only recovery as "close the browser tab", which is what it used to be.
+  const [needsRepaint, setNeedsRepaint] = useState(false)
+  const [repainting, setRepainting] = useState(false)
   const termRef = useRef<XTermTerminal | null>(null)
   const fitRef = useRef<XTermFitAddon | null>(null)
   const closedRef = useRef(false)
@@ -339,6 +345,38 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
         scheduleFit()
         pushResize(term.cols, term.rows)
       }
+      // Sent once per connect, immediately before the replayed bytes.
+      //
+      // A truncated backlog is not just "some scrollback is missing". The head
+      // is where a full-screen program's setup lives — the switch into the
+      // alternate buffer and the first full paint — and the trim drops exactly
+      // that while keeping the mid-stream frames that only make sense after it.
+      // Replaying the remainder gives xterm cursor moves and clears against a
+      // screen that was never established, which renders as solid black even
+      // though the session is completely healthy and still taking input.
+      //
+      // xterm cannot repair this from the client: the program owns its output
+      // and only repaints when it decides to. So ask the server to make it
+      // redraw, and if that does not take, say so rather than leaving a black
+      // rectangle and no explanation.
+      es.addEventListener('backlog', (e) => {
+        if (disposed) return
+        try {
+          const meta = JSON.parse((e as MessageEvent).data) as { truncated?: boolean }
+          if (!meta.truncated) return
+          // Clear first: the replay is about to write frames that assume a
+          // screen state this terminal has never been in, and leaving the
+          // fragments behind makes the result harder to read, not easier.
+          term.reset()
+          setNeedsRepaint(true)
+          void requestRepaint(id).then((ok) => {
+            if (!disposed && ok) setNeedsRepaint(false)
+          })
+        } catch {
+          /* malformed meta — treat as a normal replay */
+        }
+      })
+
       // First byte of real output is the latest point at which layout is
       // guaranteed settled; cheap one-shot correction.
       let sawFirstOutput = false
@@ -546,6 +584,43 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
           </span>
         </div>
       )}
+      {needsRepaint && (
+        <div
+          role="alert"
+          className="flex shrink-0 items-center gap-1.5 border-b border-warning/30 bg-warning/10 px-2.5 py-1 font-mono text-[10px] leading-relaxed text-warning"
+        >
+          <span className="mt-[1px] shrink-0" aria-hidden="true">&#9888;</span>
+          <span className="min-w-0 flex-1">
+            This terminal reconnected with part of its history missing, so the screen may be
+            blank or stale. The session itself is fine — typing still reaches it.
+          </span>
+          <button
+            type="button"
+            disabled={repainting}
+            onClick={async () => {
+              setRepainting(true)
+              const ok = await requestRepaint(id)
+              setRepainting(false)
+              if (ok) setNeedsRepaint(false)
+              // Failed repaint means no live session behind this pane. Say what
+              // will actually work rather than repeating a suggestion that just
+              // demonstrably didn't.
+              else setInputError('Could not redraw — the session is gone. Restart the terminal.')
+            }}
+            className="shrink-0 rounded border border-warning/40 px-1.5 py-0.5 uppercase tracking-wider transition-colors hover:bg-warning/20 disabled:opacity-50"
+          >
+            {repainting ? 'Redrawing…' : 'Redraw'}
+          </button>
+          <button
+            type="button"
+            onClick={onRestart}
+            title="Restart this terminal — ends the running process"
+            className="shrink-0 rounded border border-warning/40 px-1.5 py-0.5 uppercase tracking-wider transition-colors hover:bg-warning/20"
+          >
+            Restart
+          </button>
+        </div>
+      )}
       {inputError && (
         <div
           role="alert"
@@ -553,6 +628,21 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
         >
           <span className="mt-[1px] shrink-0" aria-hidden="true">&#9888;</span>
           <span className="min-w-0 flex-1">{inputError}</span>
+          {/* The message has always said "restart the terminal"; this makes that
+              a thing you can click. Without it the instruction is accurate and
+              useless — the restart control is one of eleven unlabelled icons. */}
+          {/session was lost|session is gone/i.test(inputError) && (
+            <button
+              type="button"
+              onClick={() => {
+                setInputError(null)
+                onRestart?.()
+              }}
+              className="shrink-0 rounded border border-destructive/40 px-1.5 py-0.5 uppercase tracking-wider transition-colors hover:bg-destructive/20"
+            >
+              Restart
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setInputError(null)}
@@ -646,6 +736,23 @@ async function sendInput(id: string, data: string, sequence: number): Promise<st
   } catch (error) {
     console.error('[terminal chain] transport failed', { id, sequence, error: error instanceof Error ? error.message : String(error) })
     return 'Terminal backend unreachable — check your connection.'
+  }
+}
+
+/**
+ * Ask the server to make the running program repaint.
+ *
+ * Separate from sendResize because the pane's size is not what's wrong — the
+ * screen is. See the repaint route for why this cannot be done client-side.
+ */
+async function requestRepaint(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/terminal/pty/${id}/repaint`, { method: 'POST' })
+    if (!res.ok) return false
+    const body = (await res.json().catch(() => ({}))) as { ok?: boolean }
+    return body.ok === true
+  } catch {
+    return false
   }
 }
 

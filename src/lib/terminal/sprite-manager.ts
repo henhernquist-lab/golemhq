@@ -71,6 +71,13 @@ export interface SpriteSession {
   /** Chunked scrollback, trimmed to MAX_SCROLLBACK_BYTES. */
   scrollback: string[]
   scrollbackBytes: number
+  /**
+   * Whether anything has been trimmed off the FRONT. Same meaning and same
+   * consequence as pty-manager's flag: the head is where a full-screen TUI's
+   * `\x1b[?1049h` and first paint live, so a truncated replay can leave a
+   * reattached terminal black. See forceRepaint.
+   */
+  scrollbackTruncated: boolean
   /** Live SSE subscribers. */
   dataListeners: Set<(data: string) => void>
   exitListeners: Set<(exitCode: number, signal?: number) => void>
@@ -94,6 +101,7 @@ function trimScrollback(session: SpriteSession) {
   while (session.scrollbackBytes > MAX_SCROLLBACK_BYTES && session.scrollback.length > 1) {
     const chunk = session.scrollback.shift()!
     session.scrollbackBytes -= chunk.length
+    session.scrollbackTruncated = true
   }
 }
 
@@ -307,6 +315,7 @@ export async function createSession(
     lastWriteAt: Date.now(),
     scrollback: [],
     scrollbackBytes: 0,
+    scrollbackTruncated: false,
     dataListeners: new Set(),
     exitListeners: new Set(),
     exited: false,
@@ -393,6 +402,7 @@ export async function resolveSession(id: string): Promise<SpriteSession | undefi
     // empty here loses nothing.
     scrollback: [],
     scrollbackBytes: 0,
+    scrollbackTruncated: false,
     dataListeners: new Set(),
     exitListeners: new Set(),
     exited: false,
@@ -555,6 +565,26 @@ export function subscribe(
     session.dataListeners.delete(onData)
     if (onExit) session.exitListeners.delete(onExit)
   }
+}
+
+export function isScrollbackTruncated(id: string): boolean {
+  return sessions.get(id)?.scrollbackTruncated ?? false
+}
+
+/**
+ * Provoke a repaint from whatever is running, by making the terminal size
+ * actually change. See pty-manager.forceRepaint for why re-asserting the same
+ * geometry is not enough — resizeSession early-returns on an unchanged size, so
+ * a reattached TUI would otherwise never be told to redraw.
+ */
+export async function forceRepaint(id: string): Promise<boolean> {
+  const session = sessions.get(id)
+  if (!session || session.exited || session.cols <= 1) return false
+  const { cols, rows } = session
+  const nudged = await resizeSession(id, cols - 1, rows)
+  if (!nudged) return false
+  setTimeout(() => void resizeSession(id, cols, rows), 50)
+  return true
 }
 
 export function getScrollback(id: string): string {

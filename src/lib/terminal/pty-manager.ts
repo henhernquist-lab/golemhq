@@ -25,6 +25,17 @@ export interface PTYSession {
   /** Chunked scrollback, trimmed to MAX_SCROLLBACK_BYTES. */
   scrollback: string[]
   scrollbackBytes: number
+  /**
+   * Whether anything has ever been trimmed off the FRONT of the scrollback.
+   *
+   * This matters far more than it looks. Trimming drops whole chunks from the
+   * head, so a full-screen TUI's setup — `\x1b[?1049h` to enter the alternate
+   * buffer, and the first full paint — is exactly what gets thrown away first,
+   * while the mid-stream frames that only make sense relative to it survive.
+   * Replaying that to a fresh xterm produces cursor moves and `\x1b[2J` clears
+   * with no screen ever set up: a black terminal with a live cursor.
+   */
+  scrollbackTruncated: boolean
   /** Live SSE subscribers. */
   dataListeners: Set<(data: string) => void>
   exitListeners: Set<(exitCode: number, signal?: number) => void>
@@ -89,6 +100,7 @@ export async function createSession(opts?: {
     lastWriteAt: Date.now(),
     scrollback: [],
     scrollbackBytes: 0,
+    scrollbackTruncated: false,
     dataListeners: new Set(),
     exitListeners: new Set(),
     exited: false,
@@ -139,6 +151,7 @@ function trimScrollback(session: PTYSession) {
   while (session.scrollbackBytes > MAX_SCROLLBACK_BYTES && session.scrollback.length > 1) {
     const chunk = session.scrollback.shift()!
     session.scrollbackBytes -= chunk.length
+    session.scrollbackTruncated = true
   }
 }
 
@@ -176,6 +189,34 @@ export function resizeSession(id: string, cols: number, rows: number): boolean {
   }
 }
 
+/**
+ * Make whatever is running repaint its screen.
+ *
+ * There is no escape sequence that means "redraw yourself" — a full-screen
+ * program owns its own output and only repaints when it decides to. The one
+ * signal that reliably provokes one is SIGWINCH, which every TUI handles
+ * because it has to re-layout.
+ *
+ * Hence the deliberate jiggle. resizeSession early-returns when the geometry
+ * is unchanged (correctly — it avoids pointless churn), so re-asserting the
+ * SAME size after a reconnect delivers no signal at all. That is precisely the
+ * gap that leaves a reattached TUI sitting on a screen it will never redraw.
+ * Shrinking by one column and restoring forces two real SIGWINCHes and ends on
+ * the geometry the caller asked for.
+ */
+export function forceRepaint(id: string): boolean {
+  const session = sessions.get(id)
+  if (!session || session.exited) return false
+  const { cols, rows } = session
+  if (cols <= 1) return false
+  const nudged = resizeSession(id, cols - 1, rows)
+  if (!nudged) return false
+  // Same tick would coalesce into one resize the app may never observe as a
+  // change; a macrotask apart guarantees two distinct SIGWINCHes.
+  setTimeout(() => resizeSession(id, cols, rows), 50)
+  return true
+}
+
 export function killSession(id: string): boolean {
   const session = sessions.get(id)
   if (!session) return false
@@ -211,6 +252,18 @@ export function getScrollback(id: string): string {
   const session = sessions.get(id)
   if (!session) return ''
   return session.scrollback.join('')
+}
+
+/**
+ * Whether this session's replay is missing its head.
+ *
+ * The client needs to know, because a truncated replay cannot be trusted to
+ * leave the screen in a coherent state and the only reliable repair is to make
+ * the running program repaint itself. See the client's handling of the
+ * `backlog` event.
+ */
+export function isScrollbackTruncated(id: string): boolean {
+  return sessions.get(id)?.scrollbackTruncated ?? false
 }
 
 // ─── Reaper ─────────────────────────────────────────────────
