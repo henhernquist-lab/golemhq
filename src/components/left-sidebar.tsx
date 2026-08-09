@@ -21,6 +21,7 @@ import {
   Home,
   Wand2,
   GitBranch,
+  ListTree,
   type LucideIcon,
 } from 'lucide-react'
 import { GolemLogo } from './golem-logo'
@@ -58,6 +59,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     title: 'Workspace',
     items: [
       { href: '/forge', icon: Swords, label: 'The Forge', desc: 'Autonomous coding agent' },
+      { href: '/missions', icon: ListTree, label: 'Missions', desc: 'Mission, task and agent state' },
       { href: '/scriptorium', icon: GraduationCap, label: 'The Scriptorium', desc: 'Tutorials and skills' },
       { href: '/scribe', icon: Wand2, label: 'The Scribe', desc: 'Prompt engineering lab' },
       { href: '/lab', icon: FlaskConical, label: 'Lab', desc: 'Experiments and overnight runs' },
