@@ -29,9 +29,13 @@ test.describe('artifact lab', () => {
     // down as "canvas never became ready", which reads like a render bug and
     // sends you looking in entirely the wrong place.
     await page.goto('/login')
+    // The form defaults to the Google tab; the email/password inputs do not
+    // exist in the DOM until the Email tab is selected.
+    await page.getByRole('button', { name: 'email', exact: true }).click()
+    await page.getByRole('button', { name: 'sign in', exact: true }).click()
     await page.getByPlaceholder('email').fill(EMAIL!)
     await page.getByPlaceholder('password').fill(PASSWORD!)
-    await page.getByRole('button', { name: /sign in|log in|continue/i }).first().click()
+    await page.getByRole('button', { name: /^(sign in|continue)$/i }).last().click()
     try {
       await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
     } catch {
