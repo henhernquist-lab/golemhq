@@ -18,11 +18,24 @@ try {
 
 export default defineConfig({
   testDir: './tests',
-  timeout: 30_000,
+  // 30s is not enough here. This container has no GPU, so WebGL runs on
+  // SwiftShader, and a cold Turbopack compile of a 3D route routinely costs
+  // 10-15s before the first frame. The old limit expired mid-assertion and
+  // tore the browser down, which surfaced as "Target page has been closed" —
+  // hiding whatever the test was actually about to report.
+  timeout: 120_000,
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:8082',
+    // localhost, NOT 127.0.0.1. Next 16 blocks cross-origin access to dev
+    // resources (/_next/webpack-hmr, the RSC payload) by default, and it counts
+    // 127.0.0.1 as a different origin from the localhost the server binds. The
+    // page still server-renders, so it looks completely fine — but React never
+    // hydrates, nothing responds to a click, and there is no error anywhere to
+    // explain it. Every interaction test would fail for reasons that look like
+    // application bugs. The alternative fix is allowedDevOrigins in
+    // next.config.ts; using the origin the server already trusts is narrower.
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:8082',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },

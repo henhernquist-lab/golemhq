@@ -32,10 +32,13 @@ test.describe('artifact lab', () => {
     // The form defaults to the Google tab; the email/password inputs do not
     // exist in the DOM until the Email tab is selected.
     await page.getByRole('button', { name: 'email', exact: true }).click()
-    await page.getByRole('button', { name: 'sign in', exact: true }).click()
+    // Two buttons read "sign in": the signin/signup mode toggle (type=button)
+    // and the form's own submit. Disambiguated by type rather than by position,
+    // which would silently follow any reordering of the markup.
+    await page.locator('button[type="button"]', { hasText: /^sign in$/ }).first().click()
     await page.getByPlaceholder('email').fill(EMAIL!)
     await page.getByPlaceholder('password').fill(PASSWORD!)
-    await page.getByRole('button', { name: /^(sign in|continue)$/i }).last().click()
+    await page.locator('button[type="submit"]').click()
     try {
       await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
     } catch {
