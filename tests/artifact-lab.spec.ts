@@ -22,7 +22,6 @@ test.describe('artifact lab', () => {
 
   test('renders the Blender-generated model and animates it', async ({ page }) => {
     const failures: string[] = []
-    page.on('pageerror', (e) => failures.push(e.message))
 
     // Auth is a precondition, not part of what this test is measuring. If it
     // fails, say so in those words — a bad password otherwise surfaces further
@@ -51,6 +50,13 @@ test.describe('artifact lab', () => {
       )
     }
 
+    // Only now start collecting page errors. Registering before login would
+    // scoop up whatever the dashboard emits on the way through — and it does
+    // emit: ModelStatusCard has a server/client hydration mismatch that has
+    // nothing to do with this component. Attributing that to the artifact lab
+    // would make this test fail for someone else's bug.
+    page.on('pageerror', (e) => failures.push(e.message))
+
     await page.goto('/atelier/lab')
     // Landing back on /login means the session did not stick (e.g. the account
     // authenticated but is not the owner the route gate requires).
@@ -61,7 +67,11 @@ test.describe('artifact lab', () => {
       )
     }
 
-    const canvas = page.locator('canvas')
+    // Scoped, not `page.locator('canvas')`. The app renders a second WebGL
+    // canvas of its own (the ambient mascot, present on every page including
+    // /login), so a bare canvas selector is ambiguous — and worse, could pass
+    // by measuring the mascot while the artifact never rendered at all.
+    const canvas = page.getByTestId('artifact-canvas').locator('canvas')
     await expect(canvas).toBeVisible()
     await expect(canvas).toHaveAttribute('data-artifact-ready', 'true', { timeout: 20_000 })
 
