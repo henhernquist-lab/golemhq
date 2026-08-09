@@ -26,6 +26,7 @@ import {
   base64Arg,
   worktreeSignature,
   diffSignatures,
+  committedFiles,
   type WorktreeDelta,
 } from '@/lib/terminal/headless-run'
 import { withMcp, type McpServerName } from './mcp'
@@ -145,6 +146,14 @@ export async function runBuilderTask(
   const after = await worktreeSignature(options.cwd)
   const delta: WorktreeDelta = diffSignatures(before, after)
 
+  // A committed change leaves a clean tree, so the delta knows work happened
+  // but has no paths to show for it. The validators key off this list — an
+  // empty one skips every check and calls that a pass — so fill it from the
+  // commit itself.
+  if (delta.committed && delta.files.length === 0) {
+    delta.files = await committedFiles(options.cwd)
+  }
+
   const ranCleanly = run.failure === null && !timedOut && exitCode === 0
   // A builder that changed nothing did not do the task, whatever it exited.
   // This is the check that would have caught two batches of hollow successes.
@@ -157,7 +166,7 @@ export async function runBuilderTask(
       : exitCode === null
         ? 'run ended without an end marker — the shell or CLI died mid-run'
         : wroteNothing
-        ? `${agent.cliCommand} exited 0 but the working tree did not change — the CLI ran and produced no edits`
+        ? `${agent.cliCommand} exited 0 but neither the working tree nor HEAD moved — the CLI ran and produced no edits`
         : exitCode === 0
           ? null
           : `${agent.cliCommand} exited ${exitCode}`
@@ -179,6 +188,7 @@ export async function runBuilderTask(
     {
       changed: delta.changed,
       unknown: delta.unknown,
+      committed: delta.committed,
       fileCount: delta.files.length,
       files: delta.files,
       agent: agent.name,

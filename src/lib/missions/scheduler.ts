@@ -1,9 +1,10 @@
 // Batch 4 — the Scheduler / Dispatcher (Layer 1).
 //
 // The Planner leaves every task with assigned_agent null. This picks which
-// builder runs each ready task, in dependency order, and hands off to the
-// Batch 2 adapter to actually execute. It does not validate results (Batch 5),
-// run anything in parallel or take file leases (Batch 6), or retry failures.
+// builder runs each ready task, in dependency order, hands off to the Batch 2
+// adapter to execute it, and then puts the result in front of the Batch 5
+// validators before anything downstream is allowed to start. It does not run
+// anything in parallel or take file leases (Batch 6), or retry failures.
 //
 // Sequential on purpose. Two builders editing the same checkout at once is a
 // lost-update race, and the only thing that would make it safe — the leases
@@ -12,6 +13,7 @@
 
 import { runBuilderTask } from './adapter'
 import type { McpServerName } from './mcp'
+import { validateTask, type ValidationReport } from './validator'
 import { backend } from '@/lib/terminal/headless-run'
 import {
   getDetections,
@@ -41,14 +43,12 @@ export interface ScheduleOptions {
    * Which dependency statuses unblock a dependent task. Defaults to
    * ['complete'] alone.
    *
-   * Worth understanding before changing: this scheduler parks successful tasks
-   * at 'validating', and nothing moves them to 'complete' until the Batch 5
-   * validators exist. So with the default, exactly one wave of
-   * dependency-free tasks runs and everything downstream stays blocked — which
-   * is correct, because "the builder said it worked" is not the same as "it
-   * works". Passing ['complete','validating'] opts into running unvalidated
-   * work, which is what you want for an end-to-end demo and not what you want
-   * against a real repo.
+   * Worth understanding before changing: a successful run parks a task at
+   * 'validating', and only the Batch 5 validators move it on from there. So
+   * with the default, a dependent runs when its dependency's code has actually
+   * been type-checked and linted — not merely when a builder claimed success.
+   * Passing ['complete','validating'] opts back into running unvalidated work,
+   * which is a demo setting, not a setting for a real repo.
    */
   satisfiedBy?: TaskStatus[]
   /** Stop after this many tasks in one call. Guards a runaway mission. */
@@ -65,6 +65,16 @@ export interface ScheduleOptions {
    * of the CLI and not something the scheduler can work around.
    */
   mcpServers?: McpServerName[]
+  /**
+   * Run the Layer 3 validators on a task the builder succeeded at.
+   *
+   * On by default: leaving it off means tasks pile up at 'validating' and
+   * nothing downstream ever unblocks, which is the dead end this exists to
+   * close. Off is for isolating builder behaviour from validator behaviour.
+   */
+  validate?: boolean
+  /** Per-check wall-clock cap inside the validator. */
+  validateTimeoutMs?: number
 }
 
 export interface ScheduledTask {
@@ -78,6 +88,8 @@ export interface ScheduledTask {
   exitCode: number | null
   durationMs: number | null
   error: string | null
+  /** Validator verdict, when the builder succeeded and validation ran. */
+  validation: ValidationReport | null
 }
 
 export interface ScheduleResult {
@@ -254,6 +266,7 @@ export async function scheduleTasks(
       scheduled.push({
         task, agent, rationale, executed: false, success: null,
         finalStatus: 'assigned', exitCode: null, durationMs: null, error: null,
+        validation: null,
       })
       // Without execution nothing will ever become ready, so stop after one
       // pass rather than spinning on the same task forever.
@@ -281,13 +294,42 @@ export async function scheduleTasks(
 
     // The adapter records the result but deliberately does not move the task —
     // that call is the caller's, and this is the caller.
-    const finalStatus: TaskStatus = success ? 'validating' : 'failed'
+    let finalStatus: TaskStatus = success ? 'validating' : 'failed'
     await updateTaskStatus(task.id, finalStatus, {
       by: 'scheduler',
       agent: agent.name,
       exitCode,
       ...(error ? { error } : {}),
     })
+
+    // The builder's verdict got the task to 'validating'. Only the validators
+    // decide what happens next, and their decision is what unblocks
+    // dependents — the loop re-reads statuses on the next pass.
+    let validation: ValidationReport | null = null
+    if (success && options.validate !== false) {
+      try {
+        validation = await validateTask(task.id, {
+          cwd: options.cwd,
+          timeoutMs: options.validateTimeoutMs,
+        })
+        finalStatus = validation.finalStatus
+        if (!validation.passed) {
+          success = false
+          error = validation.checks
+            .filter((c) => c.status === 'failed')
+            .map((c) => `${c.name}: ${c.reason ?? 'failed'}`)
+            .join('; ')
+        }
+      } catch (err) {
+        // A validator that cannot run has not approved anything. Failing the
+        // task is the only safe reading — the alternative is a task that
+        // advances because the check crashed.
+        success = false
+        error = `validator error: ${err instanceof Error ? err.message : String(err)}`
+        await updateTaskStatus(task.id, 'failed', { by: 'scheduler', error })
+        finalStatus = 'failed'
+      }
+    }
 
     if (!success) {
       await recordEvent(
@@ -300,7 +342,7 @@ export async function scheduleTasks(
 
     scheduled.push({
       task, agent, rationale, executed: true, success,
-      finalStatus, exitCode, durationMs, error,
+      finalStatus, exitCode, durationMs, error, validation,
     })
   }
 

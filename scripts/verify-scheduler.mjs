@@ -12,8 +12,8 @@
 //   GOAL=<text>        override the goal
 //   MAX_TASKS=<n>      cap tasks executed this run (default 2 — these are real
 //                      CLI runs against a real checkout and they cost money)
-//   STRICT=1           require dependencies to be 'complete', not 'validating'
-//                      (with no validators yet this runs only the first wave)
+//   NOVALIDATE=1       dispatch without running the Batch 5 validators, so a
+//                      builder problem can be told apart from a validator one
 //   DRY=1              assign agents but execute nothing
 //   KEEP=1             keep the mission
 
@@ -62,9 +62,10 @@ try {
     cwd: REPO_CWD,
     maxTasks: MAX_TASKS,
     dryRun: DRY,
-    // Successful tasks park at 'validating' and nothing promotes them until the
-    // Batch 5 validators exist, so the default would run one wave and stop.
-    satisfiedBy: process.env.STRICT === '1' ? ['complete'] : ['complete', 'validating'],
+    validate: process.env.NOVALIDATE !== '1',
+    // Left at the default ['complete']: since Batch 5 the validators actually
+    // promote tasks, so a dependent now waits for code that type-checks rather
+    // than for a builder's say-so.
   })
 
   console.log(`\n  dispatchable agents (${result.candidates.length}):`)
@@ -83,6 +84,17 @@ try {
         ? `run:   ${s.success ? 'SUCCESS' : 'FAILED'} exit=${s.exitCode ?? '—'} ${s.durationMs ?? '?'}ms → ${s.finalStatus}`
         : `run:   skipped (dry) → ${s.finalStatus}`,
     )
+    if (s.validation) {
+      const summary = s.validation.checks
+        .map((c) => `${c.name}=${c.status}`)
+        .join(' ')
+      info(`valid: ${s.validation.passed ? 'PASSED' : 'FAILED'}  ${summary}`)
+      for (const c of s.validation.checks.filter((c) => c.status === 'failed')) {
+        info(`  ✗ ${c.name}: ${c.reason}`)
+      }
+    } else if (s.executed && process.env.NOVALIDATE !== '1' && s.success) {
+      info('valid: NOT RUN')
+    }
     if (s.error) info(`error: ${s.error.slice(0, 160)}`)
   }
   info(`deferred=${result.deferred}  blocked=${result.blocked}`)
@@ -103,7 +115,14 @@ try {
   for (const s of result.scheduled) {
     const t = afterById.get(s.task.id)
     if (!t.assignedAgent) throw new Error(`"${t.title}" has no assigned_agent after scheduling`)
-    const expected = DRY ? 'assigned' : s.success ? 'validating' : 'failed'
+    // Since Batch 5 a successful build no longer ends at 'validating' — the
+    // validators settle it, so 'complete' is the success state and reaching it
+    // is the whole point of this run.
+    const expected = DRY
+      ? 'assigned'
+      : process.env.NOVALIDATE === '1'
+        ? s.success ? 'validating' : 'failed'
+        : s.success ? 'complete' : 'failed'
     if (t.status !== expected) throw new Error(`"${t.title}" is "${t.status}", expected "${expected}"`)
   }
   ok(`every dispatched task assigned and landed at its expected status`)
@@ -139,11 +158,26 @@ try {
   }
 
   console.log('\nSCHEDULER EVENTS')
-  for (const e of (await listEvents(mission.id)).filter((e) => e.type.startsWith('scheduler.'))) {
+  const events = await listEvents(mission.id)
+  for (const e of events.filter((e) => e.type.startsWith('scheduler.'))) {
     console.log(`  ${e.type.padEnd(24)} ${JSON.stringify(e.payload)}`)
   }
 
-  console.log('\n✓ planner graph → scheduler assigned and executed in order → correct statuses\n')
+  if (!DRY && process.env.NOVALIDATE !== '1') {
+    const validated = events.filter((e) => e.type === 'task.validated')
+    const succeeded = result.scheduled.filter((s) => s.executed && s.validation)
+    if (validated.length < succeeded.length) {
+      throw new Error(`${succeeded.length} task(s) validated but only ${validated.length} task.validated events`)
+    }
+    // The claim this whole batch exists to make good on.
+    const reachedComplete = after.filter((t) => t.status === 'complete')
+    if (succeeded.some((s) => s.validation.passed) && reachedComplete.length === 0) {
+      throw new Error('a task passed validation but nothing reached "complete"')
+    }
+    ok(`${reachedComplete.length} task(s) reached true 'complete' through the validators`)
+  }
+
+  console.log('\n✓ planner graph → scheduler assigned and executed in order → validated → correct statuses\n')
 } catch (err) {
   console.error('\n✗ VERIFICATION FAILED\n')
   console.error(err instanceof Error ? (err.stack ?? err.message) : err)
