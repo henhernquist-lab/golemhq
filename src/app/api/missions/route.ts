@@ -12,7 +12,7 @@
  */
 
 import { auth } from '@/lib/auth'
-import { listMissions, listAgents, getDetections } from '@/lib/missions/store'
+import { listMissions, listAgents, getDetections, listAgentInstructions } from '@/lib/missions/store'
 import type { AgentDetectionRecord } from '@/lib/missions/store'
 
 export const runtime = 'nodejs'
@@ -37,11 +37,17 @@ export async function GET(req: Request) {
       /* migration not applied */
     }
 
+    // Same tolerance for the instructions column — it lands in
+    // 20260809160000_agent_instructions.sql, and the roster is still useful
+    // without it.
+    const instructions = await listAgentInstructions()
+
     return Response.json({
       missions,
       agents: agents.map((agent) => ({
         ...agent,
         detection: detections.get(agent.id) ?? null,
+        instructions: instructions.get(agent.id) ?? null,
       })),
     })
   } catch (err) {

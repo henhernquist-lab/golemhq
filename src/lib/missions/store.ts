@@ -520,6 +520,158 @@ export async function getAgentByName(name: string): Promise<Agent | null> {
   return data ? toAgent(data as AgentRow) : null
 }
 
+// ── Agent instructions ────────────────────────────────────────────────
+// Same reasoning as the detection columns below: `instructions` arrives in
+// 20260809160000_agent_instructions.sql, so it stays off listAgents' SELECT.
+// The adapter reads it on every builder run and must degrade to "no standing
+// instructions" — not to a crash — on a database without the migration.
+
+const INSTRUCTIONS_MIGRATION = 'supabase/migrations/20260809160000_agent_instructions.sql'
+
+function instructionsColumnMissing(error: { message?: string; code?: string } | null): boolean {
+  return /column .*instructions.* does not exist/i.test(error?.message ?? '') || isTableMissing(error)
+}
+
+/**
+ * Standing instructions for one agent, or null.
+ *
+ * Returns null rather than throwing when the column is absent. An agent with
+ * no instructions and an agent on a pre-migration database behave identically
+ * — both simply get the task prompt — so the run should proceed either way.
+ */
+export async function getAgentInstructions(agentId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('agents')
+    .select('instructions')
+    .eq('id', agentId)
+    .maybeSingle()
+  if (error) {
+    if (instructionsColumnMissing(error)) return null
+    fail('getAgentInstructions', error)
+  }
+  const value = (data as { instructions?: string | null } | null)?.instructions
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+/** Instructions for every agent, for the roster view. Empty map pre-migration. */
+export async function listAgentInstructions(): Promise<Map<string, string>> {
+  const { data, error } = await supabase.from('agents').select('id, instructions')
+  if (error) {
+    if (instructionsColumnMissing(error)) return new Map()
+    fail('listAgentInstructions', error)
+  }
+  const out = new Map<string, string>()
+  for (const row of (data ?? []) as { id: string; instructions?: string | null }[]) {
+    if (typeof row.instructions === 'string' && row.instructions.trim()) out.set(row.id, row.instructions)
+  }
+  return out
+}
+
+// ── Agent writes (owner-gated at the route layer) ─────────────────────
+
+export interface CreateAgentInput {
+  name: string
+  layer: AgentLayer
+  cliCommand?: string | null
+  instructions?: string | null
+  enabled?: boolean
+  strengths?: string[]
+}
+
+export interface UpdateAgentInput {
+  name?: string
+  cliCommand?: string | null
+  instructions?: string | null
+  enabled?: boolean
+}
+
+/** Blank is not a value here — see the check constraint in the migration. */
+function normaliseInstructions(value: string | null | undefined): string | null | undefined {
+  if (value === undefined) return undefined
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : null
+}
+
+export async function createAgent(input: CreateAgentInput): Promise<Agent> {
+  // A layer-2 agent with no cli_command cannot be dispatched to, and the
+  // adapter throws when it meets one. Refusing here turns a confusing runtime
+  // failure into an obvious form error.
+  if (input.layer === 2 && !input.cliCommand?.trim()) {
+    throw new MissionStoreError('A builder (layer 2) needs a cli_command — that is what gets executed.')
+  }
+
+  const row: Record<string, unknown> = {
+    name: input.name.trim(),
+    layer: input.layer,
+    cli_command: input.cliCommand?.trim() || null,
+    enabled: input.enabled ?? true,
+    strengths: input.strengths ?? [],
+  }
+  const instructions = normaliseInstructions(input.instructions)
+  if (instructions !== undefined) row.instructions = instructions
+
+  const { data, error } = await supabase
+    .from('agents')
+    .insert(row)
+    .select(
+      'id, name, layer, cli_command, strengths, speed_rating, cost_rating, reliability_pct, context_window, enabled, parent_id, created_at',
+    )
+    .single()
+  if (error) {
+    if (instructionsColumnMissing(error)) {
+      throw new MissionStoreError(`createAgent: apply ${INSTRUCTIONS_MIGRATION} before setting instructions.`, error)
+    }
+    if (error.code === PG_UNIQUE_VIOLATION) {
+      throw new MissionStoreError(`An agent named "${input.name}" already exists.`, error)
+    }
+    fail('createAgent', error)
+  }
+  return toAgent(data as AgentRow)
+}
+
+export async function updateAgent(id: string, patch: UpdateAgentInput): Promise<Agent> {
+  const row: Record<string, unknown> = {}
+  if (patch.name !== undefined) row.name = patch.name.trim()
+  if (patch.cliCommand !== undefined) row.cli_command = patch.cliCommand?.trim() || null
+  if (patch.enabled !== undefined) row.enabled = patch.enabled
+  const instructions = normaliseInstructions(patch.instructions)
+  if (instructions !== undefined) row.instructions = instructions
+
+  if (Object.keys(row).length === 0) {
+    const existing = await getAgentById(id)
+    if (!existing) throw new MissionStoreError(`updateAgent: agent ${id} not found`)
+    return existing
+  }
+
+  const { data, error } = await supabase
+    .from('agents')
+    .update(row)
+    .eq('id', id)
+    .select(
+      'id, name, layer, cli_command, strengths, speed_rating, cost_rating, reliability_pct, context_window, enabled, parent_id, created_at',
+    )
+    .single()
+  if (error) {
+    if (instructionsColumnMissing(error)) {
+      throw new MissionStoreError(`updateAgent: apply ${INSTRUCTIONS_MIGRATION} before setting instructions.`, error)
+    }
+    fail('updateAgent', error)
+  }
+  return toAgent(data as AgentRow)
+}
+
+export async function getAgentById(id: string): Promise<Agent | null> {
+  const { data, error } = await supabase
+    .from('agents')
+    .select(
+      'id, name, layer, cli_command, strengths, speed_rating, cost_rating, reliability_pct, context_window, enabled, parent_id, created_at',
+    )
+    .eq('id', id)
+    .maybeSingle()
+  if (error) fail('getAgentById', error)
+  return data ? toAgent(data as AgentRow) : null
+}
+
 // ── CLI detection ─────────────────────────────────────────────────────
 // Kept off listAgents' SELECT on purpose: these columns arrive in a later
 // migration, and widening that SELECT would break the adapter's agent lookup

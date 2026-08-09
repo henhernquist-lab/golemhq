@@ -27,14 +27,25 @@ import {
   worktreeSignature,
   diffSignatures,
   committedFiles,
+  gitRemote,
   type WorktreeDelta,
 } from '@/lib/terminal/headless-run'
 import { withMcp, type McpServerName } from './mcp'
-import { getTask, listAgents, recordEvent, recordResult, updateTaskStatus } from './store'
+import {
+  getAgentInstructions,
+  getTask,
+  listAgents,
+  recordEvent,
+  recordResult,
+  updateTaskStatus,
+} from './store'
 import type { Agent, Task, TaskResult } from './types'
 
 /** Default wall-clock cap for one builder run. */
 export const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000
+
+const INSTRUCTIONS_HEADING = 'Standing instructions (apply these to everything you do in this task):'
+const TASK_HEADING = 'Task:'
 
 export class BuilderAdapterError extends Error {
   readonly detail?: unknown
@@ -71,6 +82,14 @@ export interface RunBuilderTaskOptions {
    * hidden. See mcp.ts.
    */
   mcpServers?: McpServerName[]
+  /**
+   * Override the agent's stored standing instructions for this run.
+   *
+   * Exists so the wiring can be proven without a database round trip — see
+   * scripts/verify-agent-instructions.mjs. An empty string means "run with no
+   * instructions", which is different from undefined ("use the agent's").
+   */
+  instructions?: string
 }
 
 export interface RunBuilderTaskResult {
@@ -124,7 +143,17 @@ export async function runBuilderTask(
     throw new BuilderAdapterError(`runBuilderTask: agent ${agent.name} has no cli_command`)
   }
 
-  const prompt = task.description.trim() || task.title
+  const taskPrompt = task.description.trim() || task.title
+
+  // Standing instructions are prepended to the task, not sent separately:
+  // none of these CLIs share a --system flag, and the one channel every one of
+  // them does have is the prompt itself. Labelled so the model can tell the
+  // operator's standing rules from the task at hand.
+  const instructions =
+    options.instructions !== undefined ? options.instructions.trim() : await getAgentInstructions(agent.id)
+  const prompt = instructions
+    ? `${INSTRUCTIONS_HEADING}\n${instructions}\n\n${TASK_HEADING}\n${taskPrompt}`
+    : taskPrompt
 
   await updateTaskStatus(taskId, 'running', { agent: agent.name, cli: agent.cliCommand })
 
@@ -154,6 +183,11 @@ export async function runBuilderTask(
     delta.files = await committedFiles(options.cwd)
   }
 
+  // Captured now, while the checkout is in front of us. The audit view turns
+  // this plus headAfter into a link, and only calls it verified once GitHub
+  // confirms it — see missions/artifacts.ts.
+  const remote = delta.committed ? await gitRemote(options.cwd) : null
+
   const ranCleanly = run.failure === null && !timedOut && exitCode === 0
   // A builder that changed nothing did not do the task, whatever it exited.
   // This is the check that would have caught two batches of hollow successes.
@@ -182,6 +216,18 @@ export async function runBuilderTask(
     )
   }
 
+  // Whether instructions were in play is part of the audit trail: an agent
+  // that ignored its instructions and one that never received them look
+  // identical in the output alone.
+  if (instructions) {
+    await recordEvent(
+      task.missionId,
+      'task.instructions',
+      { agent: agent.name, chars: instructions.length, preview: instructions.slice(0, 200) },
+      taskId,
+    )
+  }
+
   await recordEvent(
     task.missionId,
     'task.worktree',
@@ -189,6 +235,9 @@ export async function runBuilderTask(
       changed: delta.changed,
       unknown: delta.unknown,
       committed: delta.committed,
+      headBefore: delta.headBefore,
+      headAfter: delta.headAfter,
+      remote,
       fileCount: delta.files.length,
       files: delta.files,
       agent: agent.name,

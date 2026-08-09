@@ -311,13 +311,25 @@ export interface WorktreeDelta {
   unknown: boolean
   /** HEAD moved: the builder committed its work rather than leaving it dirty. */
   committed: boolean
+  /** HEAD before the run, and after. The commit a task produced, if it made one. */
+  headBefore: string | null
+  headAfter: string | null
+}
+
+/** `HEAD <sha>` is the first line the signature script emits inside a repo. */
+function headOf(sig: WorktreeSignature): string | null {
+  const line = sig.lines.find((l) => l.startsWith('HEAD '))
+  const sha = line?.slice(5).trim()
+  return sha && sha !== 'none' ? sha : null
 }
 
 const MAX_REPORTED_FILES = 50
 
 /** Difference between two snapshots, as a set of lines that moved either way. */
 export function diffSignatures(before: WorktreeSignature, after: WorktreeSignature): WorktreeDelta {
-  if (before.failed || after.failed) return { changed: false, files: [], unknown: true, committed: false }
+  if (before.failed || after.failed) {
+    return { changed: false, files: [], unknown: true, committed: false, headBefore: null, headAfter: null }
+  }
 
   const beforeSet = new Set(before.lines)
   const afterSet = new Set(after.lines)
@@ -349,6 +361,30 @@ export function diffSignatures(before: WorktreeSignature, after: WorktreeSignatu
     files: files.slice(0, MAX_REPORTED_FILES),
     unknown: false,
     committed,
+    headBefore: headOf(before),
+    headAfter: headOf(after),
+  }
+}
+
+/**
+ * The checkout's `origin` remote URL, or null when it has none.
+ *
+ * Captured at run time rather than derived from the mission's `repo` field,
+ * which is a human label and frequently not a real repository at all — the
+ * verification runs use slugs like `verify/scheduler-1786290342245`. Turning
+ * that into a github.com link would produce a confident 404.
+ */
+export async function gitRemote(cwd?: string): Promise<string | null> {
+  try {
+    const run = await runHeadless('git config --get remote.origin.url 2>/dev/null', {
+      timeoutMs: SIGNATURE_TIMEOUT_MS,
+      runId: `remote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      cwd,
+    })
+    if (run.failure || run.timedOut || run.exitCode !== 0) return null
+    return run.output.trim().split('\n')[0]?.trim() || null
+  } catch {
+    return null
   }
 }
 

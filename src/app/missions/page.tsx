@@ -1,11 +1,16 @@
 'use client'
 
-// A read-only window onto the mission spine.
+// A window onto the mission spine, and the roster's control surface.
 //
 // Batches 1-5 are entirely backend, verified through scripts and terminal
 // output. That worked, but it meant a question as basic as "is Codex actually
 // installed" needed a script run to answer. This is the smallest thing that
 // makes the database visible.
+//
+// Missions and tasks stay read-only — they are driven by the Planner,
+// Scheduler and validators, and a second writer over the same rows would be a
+// competing source of truth. The roster is the exception: hiring and editing
+// workers is configuration, not execution, and both routes are owner-gated.
 //
 // Deliberately not the Batch 8 org chart. That renders against a settled
 // backend and will replace most of this; the styling here borrows /usage and
@@ -15,7 +20,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
-import { ArrowLeft, ListTree, RefreshCw, Server } from 'lucide-react'
+import { ArrowLeft, ListTree, Pencil, Plus, RefreshCw, Server } from 'lucide-react'
+
+import { TaskEvidencePanel } from '@/components/missions/task-evidence'
+import { HireWorkerPanel, type EditableAgent } from '@/components/missions/hire-worker'
 
 import type { Agent, Mission, Task, TaskStatus, MissionStatus } from '@/lib/missions/types'
 import { AGENT_LAYER_LABELS } from '@/lib/missions/types'
@@ -29,6 +37,7 @@ interface AgentWithDetection extends Agent {
     detectedAt: string | null
     detectedHost: string | null
   } | null
+  instructions: string | null
 }
 
 interface ValidationPayload {
@@ -83,6 +92,9 @@ export default function MissionsPage() {
   const [validations, setValidations] = useState<Record<string, ValidationPayload>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null)
+  const [hiring, setHiring] = useState(false)
+  const [editing, setEditing] = useState<EditableAgent | null>(null)
 
   const loadList = useCallback(async () => {
     try {
@@ -160,7 +172,7 @@ export default function MissionsPage() {
             <div>
               <h1 className="font-mono text-lg text-foreground">missions</h1>
               <p className="font-mono text-xs text-muted-foreground">
-                read-only view of the mission spine · refreshes every {POLL_MS / 1000}s
+                mission spine · open a task for its evidence · refreshes every {POLL_MS / 1000}s
               </p>
             </div>
           </div>
@@ -233,10 +245,16 @@ export default function MissionsPage() {
                   return (
                     <div key={t.id} className="rounded-lg border border-border bg-surface-secondary px-3 py-2.5">
                       <div className="flex items-start justify-between gap-3">
-                        <span className="text-xs text-foreground">
+                        <button
+                          onClick={() => setOpenTaskId(openTaskId === t.id ? null : t.id)}
+                          className="flex-1 text-left text-xs text-foreground transition-colors hover:text-primary"
+                        >
                           <span className="font-mono text-muted-foreground">{i + 1}. </span>
                           {t.title}
-                        </span>
+                          <span className="ml-1.5 font-mono text-[10px] text-muted-foreground">
+                            {openTaskId === t.id ? '▾ evidence' : '▸ evidence'}
+                          </span>
+                        </button>
                         <Badge label={t.status} tone={TASK_TONE[t.status]} />
                       </div>
                       <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] text-muted-foreground">
@@ -268,6 +286,7 @@ export default function MissionsPage() {
                           )}
                         </div>
                       )}
+                      {openTaskId === t.id && <TaskEvidencePanel taskId={t.id} />}
                     </div>
                   )
                 })}
@@ -277,10 +296,33 @@ export default function MissionsPage() {
 
         {/* ── Agent roster ───────────────────────────────────────── */}
         <section className="mt-10">
-          <h2 className="mb-3 flex items-center gap-2 font-mono text-xs uppercase tracking-wide text-muted-foreground">
-            <Server className="h-3.5 w-3.5" />
-            agent roster ({agents.length})
-          </h2>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 font-mono text-xs uppercase tracking-wide text-muted-foreground">
+              <Server className="h-3.5 w-3.5" />
+              agent roster ({agents.length})
+            </h2>
+            <button
+              onClick={() => {
+                setEditing(null)
+                setHiring((v) => !v)
+              }}
+              className="inline-flex items-center gap-1.5 rounded border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-mono text-xs text-primary transition-colors hover:bg-primary/20"
+            >
+              <Plus className="h-3 w-3" />
+              hire worker
+            </button>
+          </div>
+
+          {(hiring || editing) && (
+            <HireWorkerPanel
+              agent={editing ?? undefined}
+              onClose={() => {
+                setHiring(false)
+                setEditing(null)
+              }}
+              onSaved={loadList}
+            />
+          )}
           <div className="overflow-x-auto rounded-lg border border-border bg-surface-secondary">
             <table className="w-full min-w-[720px] text-left">
               <thead>
@@ -289,7 +331,9 @@ export default function MissionsPage() {
                   <th className="px-3 py-2">layer</th>
                   <th className="px-3 py-2">cli command</th>
                   <th className="px-3 py-2">state</th>
+                  <th className="px-3 py-2">instructions</th>
                   <th className="px-3 py-2">detected</th>
+                  <th className="px-3 py-2" />
                 </tr>
               </thead>
               <tbody>
@@ -305,6 +349,15 @@ export default function MissionsPage() {
                         label={a.enabled ? 'enabled' : 'disabled'}
                         tone={a.enabled ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-muted-foreground'}
                       />
+                    </td>
+                    <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">
+                      {a.instructions ? (
+                        <span className="text-foreground" title={a.instructions}>
+                          {a.instructions.length > 40 ? `${a.instructions.slice(0, 40)}…` : a.instructions}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
                     </td>
                     <td className="px-3 py-2 font-mono text-[10px]">
                       {/* Never checked and checked-and-absent are different
@@ -325,6 +378,25 @@ export default function MissionsPage() {
                           absent on {a.detection.detectedHost} · {when(a.detection.detectedAt)}
                         </span>
                       )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <button
+                        onClick={() => {
+                          setHiring(false)
+                          setEditing({
+                            id: a.id,
+                            name: a.name,
+                            layer: a.layer,
+                            cliCommand: a.cliCommand,
+                            enabled: a.enabled,
+                            instructions: a.instructions,
+                          })
+                        }}
+                        className="text-muted-foreground transition-colors hover:text-primary"
+                        aria-label={`edit ${a.name}`}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
                     </td>
                   </tr>
                 ))}
