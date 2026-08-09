@@ -33,8 +33,10 @@ test.describe('missions dashboard', () => {
     await expect(mission).toBeVisible({ timeout: 30_000 })
 
     // The roster, including the Layer 3 agents this batch's validators map to.
-    await expect(page.getByRole('cell', { name: 'Type Checker' })).toBeVisible()
-    await expect(page.getByRole('cell', { name: 'Claude Code' })).toBeVisible()
+    // exact, because each row's edit button carries an "edit <name>" label and
+    // a loose match resolves to both cells.
+    await expect(page.getByRole('cell', { name: 'Type Checker', exact: true })).toBeVisible()
+    await expect(page.getByRole('cell', { name: 'Claude Code', exact: true })).toBeVisible()
 
     // Detection state is the thing that used to need a script to answer.
     await expect(page.getByRole('cell', { name: /claude --permission-mode/ })).toBeVisible()
@@ -48,4 +50,45 @@ test.describe('missions dashboard', () => {
     // placeholder. 'complete' is the one Batch 5 made reachable.
     await expect(page.getByText(/^(pending|assigned|running|validating|complete|failed|blocked)$/i).first()).toBeVisible()
   })
+
+  test('a task opens its evidence, and the roster can hire', async ({ page }) => {
+    await signIn(page)
+    await page.goto('/missions')
+
+    const mission = page.locator('button', { hasText: /verify\/scheduler-\d+/ }).first()
+    await expect(mission).toBeVisible({ timeout: 30_000 })
+    await mission.click()
+
+    // Open the first task's evidence panel.
+    await page.getByRole('button', { name: /▸ evidence/ }).first().click()
+
+    // Every one of these sections is the raw material behind the badge. The
+    // timeline in particular cannot be empty — Batch 1 writes an event on
+    // every transition, so a task with no events would mean the audit log is
+    // not actually being kept.
+    await expect(page.getByText('external evidence')).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByText(/files changed \(/)).toBeVisible()
+    await expect(page.getByText(/timeline \(/)).toBeVisible()
+    await expect(page.getByText(/task\.status_changed/).first()).toBeVisible()
+
+    // The honesty requirement: a task with no external artifact must SAY so
+    // rather than leaving a reassuring blank.
+    const external = page.getByText(/no external artifact|verified on github|local only|unverified/).first()
+    await expect(external).toBeVisible()
+
+    // The hire form is a real write surface behind the owner gate.
+    await page.getByRole('button', { name: /hire worker/i }).click()
+    await expect(page.getByPlaceholder('Gemini CLI')).toBeVisible()
+    await expect(page.getByText(/prepended to every task prompt/)).toBeVisible()
+  })
 })
+
+async function signIn(page: import('playwright/test').Page) {
+  await page.goto('/login')
+  await page.getByRole('button', { name: 'email', exact: true }).click()
+  await page.locator('button[type="button"]', { hasText: /^sign in$/ }).first().click()
+  await page.getByPlaceholder('email').fill(EMAIL!)
+  await page.getByPlaceholder('password').fill(PASSWORD!)
+  await page.locator('button[type="submit"]').click()
+  await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 60_000 })
+}
