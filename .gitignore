@@ -42,3 +42,7 @@ next-env.d.ts
 
 # scratch/live-verification scripts (never committed)
 .scratch/
+
+# Playwright run artifacts
+test-results/
+playwright-report/
