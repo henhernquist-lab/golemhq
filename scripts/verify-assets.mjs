@@ -14,19 +14,18 @@
 //   BLENDER_BIN=<path>   Blender executable (portable build is fine)
 //   OUT=<path>           where to write the .glb (default public/assets/golem-cube.glb)
 //   HF_GENERATE=1        run a real Hugging Face image-to-3D generation too
+//   HOST=sprite          run Blender on the Fly Sprite, as production does
 
 import { readFileSync, mkdirSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
-try {
-  for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
-    const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim())
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
-  }
-} catch {
-  /* already in env */
-}
+import './load-env.mjs'
+
+// Same selector production uses. Without this the script can only ever prove
+// the machine it happens to run on, which is how "Blender works" and "3D
+// generation is broken in production" stayed true at the same time.
+if (process.env.HOST === 'sprite') process.env.VERCEL = '1'
 
 const blender = await import('../src/lib/assets/blender.ts')
 const hf = await import('../src/lib/assets/huggingface.ts')
@@ -145,7 +144,7 @@ try {
       await blender.runBlenderScript(RENDER_SCRIPT, { outPath: refPath, timeoutMs: 300_000 })
       const refBytes = readFileSync(refPath).byteLength
       if (refBytes < 1000) throw new Error(`reference render is only ${refBytes} bytes`)
-      ok(`reference image rendered locally (${refBytes} bytes)`)
+      ok(`reference image rendered on the ${process.env.VERCEL ? 'Sprite' : 'local host'} (${refBytes} bytes)`)
 
       const out = resolve('public/assets/hf-generated.glb')
       // imageTo3D validates the container itself and throws on a truncated or

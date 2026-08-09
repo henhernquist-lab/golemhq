@@ -18,17 +18,9 @@
 // Requires the mission spine migration applied, SUPABASE env vars, and the
 // chosen CLI installed and authenticated on this machine.
 
-import { readFileSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 
-try {
-  for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
-    const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim())
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
-  }
-} catch {
-  // fall back to whatever is already in the environment
-}
+import './load-env.mjs'
 
 const { runBuilderTask } = await import('../src/lib/missions/adapter.ts')
 const { createMission, createTask, updateTaskStatus, listAgents, listResults, listEvents, getTask } =

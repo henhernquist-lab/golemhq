@@ -18,20 +18,12 @@
 //   SKIP_BUILDER=1            orchestrator route only (no CLI spend)
 //   KEEP=1                    leave the branch and PR behind
 
-import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-try {
-  for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
-    const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim())
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
-  }
-} catch {
-  /* already in env */
-}
+import './load-env.mjs'
 
 const gh = await import('../src/lib/missions/github.ts')
 const { MCP_CONFIG_PATH, withMcp, mcpSupport } = await import('../src/lib/missions/mcp.ts')
