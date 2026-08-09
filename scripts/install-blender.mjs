@@ -15,17 +15,16 @@
 //   BLENDER_VERSION=5.2.0   which release (must be a real LTS tarball)
 //   BLENDER_SHA256=<hex>    expected checksum of the linux-x64 tarball
 //   FORCE=1                 reinstall even if already present
+//   HOST=sprite             install on the Fly Sprite instead of this machine
 
-import { readFileSync } from 'node:fs'
 
-try {
-  for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
-    const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim())
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
-  }
-} catch {
-  /* already in env */
-}
+import './load-env.mjs'
+
+// backend() picks the Sprite when VERCEL is set — that is the whole selector,
+// and it is read at call time. Running this from the Codespace would otherwise
+// always install locally, leaving production without Blender no matter how
+// many times the installer succeeded.
+if (process.env.HOST === 'sprite') process.env.VERCEL = '1'
 
 const { runHeadless, backend } = await import('../src/lib/terminal/headless-run.ts')
 

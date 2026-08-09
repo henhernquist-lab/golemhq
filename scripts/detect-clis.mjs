@@ -13,16 +13,8 @@
 // The host is whichever backend the terminal path resolves to — 'local' in the
 // Codespace, 'sprite' on Vercel. Results describe THAT host only.
 
-import { readFileSync } from 'node:fs'
 
-try {
-  for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
-    const m = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim())
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '')
-  }
-} catch {
-  /* already in env */
-}
+import './load-env.mjs'
 
 const { detectClis } = await import('../src/lib/missions/cli-detect.ts')
 const { recordDetection, getDetections } = await import('../src/lib/missions/store.ts')
