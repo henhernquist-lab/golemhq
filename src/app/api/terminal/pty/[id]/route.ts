@@ -2,12 +2,14 @@ import { auth } from '@/lib/auth'
 import {
   getSession as getLocalSession,
   getScrollback as getLocalScrollback,
+  isScrollbackTruncated as isLocalScrollbackTruncated,
   subscribe as subscribeLocal,
   killSession as killLocalSession,
 } from '@/lib/terminal/pty-manager'
 import {
   resolveSession as resolveSpriteSession,
   getScrollback as getSpriteScrollback,
+  isScrollbackTruncated as isSpriteScrollbackTruncated,
   subscribe as subscribeSprite,
   killSession as killSpriteSession,
   ensureWsLive,
@@ -88,7 +90,15 @@ export async function GET(req: Request, ctx: RouteCtx) {
       // Replay scrollback so reconnects (Strict Mode, tab-away, Vercel
       // function resync) aren't blank. On cloud, this is the local buffer
       // we've been maintaining from Sprite's WS output — same semantics.
+      // Tell the client what kind of replay this is BEFORE the bytes land.
+      // A truncated backlog is missing whatever set the screen up — for a
+      // full-screen program that means the `\x1b[?1049h` and the first paint —
+      // so replaying it verbatim can leave a perfectly live terminal showing
+      // nothing at all. The client repairs that by provoking a repaint; it can
+      // only do so if it knows.
+      const truncated = onCloud ? isSpriteScrollbackTruncated(id) : isLocalScrollbackTruncated(id)
       const backlog = getScrollback(id)
+      send('backlog', JSON.stringify({ truncated, bytes: backlog.length }))
       if (backlog) send('output', backlog)
 
       const unsub = subscribe(
