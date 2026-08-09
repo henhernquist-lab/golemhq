@@ -309,13 +309,15 @@ export interface WorktreeDelta {
   files: string[]
   /** True when either snapshot failed, so "changed" is not trustworthy. */
   unknown: boolean
+  /** HEAD moved: the builder committed its work rather than leaving it dirty. */
+  committed: boolean
 }
 
 const MAX_REPORTED_FILES = 50
 
 /** Difference between two snapshots, as a set of lines that moved either way. */
 export function diffSignatures(before: WorktreeSignature, after: WorktreeSignature): WorktreeDelta {
-  if (before.failed || after.failed) return { changed: false, files: [], unknown: true }
+  if (before.failed || after.failed) return { changed: false, files: [], unknown: true, committed: false }
 
   const beforeSet = new Set(before.lines)
   const afterSet = new Set(after.lines)
@@ -323,6 +325,14 @@ export function diffSignatures(before: WorktreeSignature, after: WorktreeSignatu
     ...after.lines.filter((l) => !beforeSet.has(l)),
     ...before.lines.filter((l) => !afterSet.has(l)),
   ]
+
+  // A builder that COMMITS its work leaves a clean tree, so the porcelain lines
+  // are identical before and after and only HEAD moves. That is why HEAD is in
+  // the signature at all — but it used to be filtered out before `changed` was
+  // computed, which made "committed the feature" indistinguishable from "did
+  // nothing" and failed those tasks. Claude Code commits by default, so this
+  // was not an edge case.
+  const committed = moved.some((l) => l.startsWith('HEAD '))
 
   // Strip the porcelain status prefix / the find metadata so the report reads
   // as paths rather than as raw snapshot lines.
@@ -334,5 +344,31 @@ export function diffSignatures(before: WorktreeSignature, after: WorktreeSignatu
         .map((p) => p.replace(/^\.\//, '')),
     ),
   ]
-  return { changed: files.length > 0, files: files.slice(0, MAX_REPORTED_FILES), unknown: false }
+  return {
+    changed: files.length > 0 || committed,
+    files: files.slice(0, MAX_REPORTED_FILES),
+    unknown: false,
+    committed,
+  }
+}
+
+/**
+ * Paths a commit touched, for when the tree is clean because the work landed.
+ *
+ * The worktree signature can say THAT a commit happened but not what was in
+ * it, and the validators need the file list — validating an empty list would
+ * skip every check and call that a pass.
+ */
+export async function committedFiles(cwd?: string, limit = MAX_REPORTED_FILES): Promise<string[]> {
+  try {
+    const run = await runHeadless(`git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null | head -${limit}`, {
+      timeoutMs: SIGNATURE_TIMEOUT_MS,
+      runId: `commitfiles-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      cwd,
+    })
+    if (run.failure || run.timedOut || run.exitCode !== 0) return []
+    return run.output.split('\n').map((l) => l.trim()).filter(Boolean)
+  } catch {
+    return []
+  }
 }

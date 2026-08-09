@@ -22,6 +22,7 @@ const CRUMBS: Record<string, Crumb[]> = {
   '/atelier': [{ label: 'Library', href: '/' }, { label: 'The Atelier' }],
   '/trials': [{ label: 'Platform', href: '/' }, { label: 'The Trials' }],
   '/usage': [{ label: 'Platform', href: '/' }, { label: 'Usage' }],
+  '/missions': [{ label: 'Workspace', href: '/' }, { label: 'Missions' }],
   '/settings': [{ label: 'System', href: '/' }, { label: 'Settings' }],
 }
 
@@ -37,6 +38,7 @@ const DESCRIPTIONS: Record<string, string> = {
   '/atelier': '3D headquarters view',
   '/trials': 'Benchmark and monitor models',
   '/usage': 'Track tokens, cost, and alerts',
+  '/missions': 'Mission, task and agent state',
   '/settings': 'Manage your account and integrations',
 }
 
