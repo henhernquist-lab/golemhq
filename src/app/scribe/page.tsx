@@ -79,10 +79,20 @@ function ArchitectPageInner() {
       })
 
       if (!res.ok) {
-        const errText = await res.text().catch(() => '')
-        let parsed: { error?: string } | null = null
-        try { parsed = JSON.parse(errText) } catch { /* not JSON */ }
-        setLines((l) => [...l, { kind: 'error', text: parsed?.error || `Request failed (HTTP ${res.status})` }])
+        const contentType = res.headers.get('content-type') ?? ''
+        let message = `Request failed (HTTP ${res.status})`
+        if (contentType.includes('application/json')) {
+          const parsed = await res.json().catch(() => null) as { error?: string } | null
+          if (parsed?.error) message = parsed.error
+        } else {
+          // Never render a framework-generated HTML error document as text.
+          // The endpoint should return JSON, but this keeps a stale deployment
+          // or an upstream proxy failure from turning markup into chat output.
+          message = res.status >= 500
+            ? 'The Scribe server hit an unexpected error. Try again shortly.'
+            : 'The Scribe request was rejected. Check the prompt and try again.'
+        }
+        setLines((l) => [...l, { kind: 'error', text: message }])
         setRunning(false)
         return
       }

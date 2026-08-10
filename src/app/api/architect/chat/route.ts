@@ -163,13 +163,39 @@ export async function POST(req: Request) {
   // Pass the provider model param. Community ids carry a `community:` marker.
   const modelParam = isCommunityModelId(selectedModel) ? communityRouteParam(selectedModel) : selectedModel
 
-  const session = await auth()
-  const googleId = (session?.user as { id?: string })?.id
-  const uid = await resolveResourceUserId(googleId ?? null)
+  // Keep all pre-stream work inside explicit error boundaries. A failure in
+  // auth, user resolution, or AI-SDK message conversion must be a JSON API
+  // error, never an uncaught exception that Next turns into an HTML 500.
+  let googleId: string | undefined
+  let uid: string | null = null
+  try {
+    const session = await auth()
+    googleId = (session?.user as { id?: string })?.id
+    uid = await resolveResourceUserId(googleId ?? null)
+  } catch (err) {
+    console.error('[architect/chat] pre-stream auth/user error:', err)
+    return Response.json(
+      { error: 'Unable to load your session. Please sign in again and retry.' },
+      { status: 500 },
+    )
+  }
 
-  const modelMessages = await convertToModelMessages(normalizedMessages)
-  const compactResult = compactMessages(modelMessages as Parameters<typeof compactMessages>[0])
-  const { messages: finalMessages, compacted, summary: compactionSummary } = compactResult
+  let finalMessages: Parameters<typeof compactMessages>[0]
+  let compacted = false
+  let compactionSummary: string | null = null
+  try {
+    const modelMessages = await convertToModelMessages(normalizedMessages)
+    const compactResult = compactMessages(modelMessages as Parameters<typeof compactMessages>[0])
+    finalMessages = compactResult.messages
+    compacted = compactResult.compacted
+    compactionSummary = compactResult.summary
+  } catch (err) {
+    console.error('[architect/chat] pre-stream message conversion error:', err)
+    return Response.json(
+      { error: 'The prompt history could not be prepared. Start a new Scribe request and try again.' },
+      { status: 400 },
+    )
+  }
 
   const startedAt = Date.now()
   let result: ReturnType<typeof streamText>
@@ -206,11 +232,19 @@ export async function POST(req: Request) {
     )
   }
 
-  return result.toUIMessageStreamResponse({
-    headers: compacted ? {
-      'X-Context-Compacted': 'true',
-      'X-Context-Compacted-Summary': encodeURIComponent(compactionSummary ?? ''),
-    } : undefined,
-    onError: (error) => safeStreamErrorMessage(error, '[architect/chat] route error'),
-  })
+  try {
+    return result.toUIMessageStreamResponse({
+      headers: compacted ? {
+        'X-Context-Compacted': 'true',
+        'X-Context-Compacted-Summary': encodeURIComponent(compactionSummary ?? ''),
+      } : undefined,
+      onError: (error) => safeStreamErrorMessage(error, '[architect/chat] route error'),
+    })
+  } catch (err) {
+    console.error('[architect/chat] response creation error:', err)
+    return Response.json(
+      { error: 'The model response could not be started. Try again or switch models.' },
+      { status: 500 },
+    )
+  }
 }
