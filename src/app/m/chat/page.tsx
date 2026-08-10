@@ -5,6 +5,8 @@ import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Send, Mic, ChevronDown, MessageCircle, Clock, X } from 'lucide-react'
+
+import { useDictation } from '@/lib/voice/use-dictation'
 import { BottomSheet } from '@/components/mobile/BottomSheet'
 import { TypingText } from '@/components/typing-text'
 import type { UIMessage, TextUIPart } from 'ai'
@@ -73,25 +75,15 @@ export default function MobileChatPage() {
     LITE_MODELS[0] ??
     { id: model, label: LITE_MODEL_LABEL, description: LITE_MODEL_DESC }
 
-  // Voice input — Web Speech API, small lift
-  const [voiceListening, setVoiceListening] = useState(false)
-  const handleVoice = useCallback(() => {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) return
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
-    const recognition = new SpeechRecognition()
-    recognition.interimResults = true
-    recognition.continuous = false
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript
-      setInput((prev) => prev + transcript)
-    }
-    recognition.onend = () => setVoiceListening(false)
-    recognition.onerror = () => setVoiceListening(false)
-    setVoiceListening(true)
-    recognition.start()
+  // Voice input — recorded here, transcribed by Whisper on the host. The
+  // browser's built-in dictation API would be less code and would work on any
+  // phone, but it uploads the microphone to Google; this app has one voice
+  // path and it is the local one.
+  const appendTranscript = useCallback((text: string) => {
+    setInput((prev) => (prev.trim() ? `${prev.trimEnd()} ${text}` : text))
   }, [])
+  const dictation = useDictation(appendTranscript)
+  const voiceUnavailable = dictation.status?.available === false
 
   return (
     <div className="flex h-dvh flex-col bg-background">
@@ -198,18 +190,34 @@ export default function MobileChatPage() {
         ref={inputContainerRef}
         className="flex-shrink-0 border-t border-border bg-surface-secondary px-3 py-2"
       >
+        {/* A disabled mic on a phone looks broken unless it says why. The
+            transcriber runs on the host, so "unavailable" is routine here. */}
+        {(dictation.busy || voiceUnavailable || dictation.error) && (
+          <p className={`mb-1.5 font-mono text-[10px] ${dictation.error ? 'text-destructive' : 'text-muted-foreground'}`}>
+            {dictation.error ??
+              dictation.busy ??
+              `voice unavailable — ${dictation.status?.reason ?? 'the transcriber is not reachable'}`}
+          </p>
+        )}
         <div className="flex items-end gap-2">
           {/* Voice button */}
           <button
-            onClick={handleVoice}
-            disabled={isStreaming}
+            onClick={dictation.toggle}
+            disabled={isStreaming || voiceUnavailable || !!dictation.busy}
             className={`flex-shrink-0 rounded-full border p-2.5 transition-colors ${
-              voiceListening
+              dictation.recording
                 ? 'border-primary bg-primary/20 text-primary animate-pulse'
                 : 'border-border text-muted-foreground hover:border-primary/30 hover:text-foreground'
             } disabled:opacity-40`}
             style={{ minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            aria-label="Voice input"
+            aria-label={
+              voiceUnavailable
+                ? `Voice input unavailable — ${dictation.status?.reason ?? 'unknown reason'}`
+                : dictation.recording
+                  ? 'Stop recording'
+                  : 'Voice input'
+            }
+            title={voiceUnavailable ? `voice unavailable — ${dictation.status?.reason ?? ''}` : undefined}
           >
             <Mic className="h-5 w-5" />
           </button>

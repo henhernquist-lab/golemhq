@@ -14,15 +14,10 @@
 // itself, and shows the reason plus the command that fixes it. Silent failure
 // here looks identical to a broken microphone.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Loader2, Mic, Square, Volume2, VolumeX } from 'lucide-react'
 
-interface VoiceStatus {
-  available: boolean
-  backend: string
-  reason: string | null
-  hint: string | null
-}
+import { useDictation } from '@/lib/voice/use-dictation'
 
 export type VoiceMode = 'type' | 'voice'
 
@@ -44,86 +39,23 @@ export function VoiceControls({
   agentId?: string
   disabled?: boolean
 }) {
-  const [status, setStatus] = useState<VoiceStatus | null>(null)
-  const [recording, setRecording] = useState(false)
-  const [busy, setBusy] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // Capture is the shared local path — the same hook Forge and Shard use, so
+  // there is exactly one microphone implementation in the app. Only playback
+  // is specific to this component.
+  const { status, recording, busy: dictationBusy, error: dictationError, start: startRecording, stop: stopRecording } =
+    useDictation(onTranscript)
+  const [speaking, setSpeaking] = useState(false)
+  const [speakError, setSpeakError] = useState<string | null>(null)
   const [speakReplies, setSpeakReplies] = useState(true)
+  const busy = dictationBusy ?? (speaking ? 'speaking…' : null)
+  const error = dictationError ?? speakError
   // Reported by the server rather than assumed from the agent: if the backend
   // has no named voices, or the chosen one has left the catalog, this is what
   // actually spoke.
   const [spokenVoice, setSpokenVoice] = useState<string | null>(null)
 
-  const recorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const spokenRef = useRef<string | null>(null)
-
-  useEffect(() => {
-    let live = true
-    fetch('/api/voice', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((s) => live && setStatus(s))
-      .catch(() => live && setStatus({ available: false, backend: 'kokoro', reason: 'could not reach the voice service', hint: null }))
-    return () => {
-      live = false
-    }
-  }, [])
-
-  const transcribe = useCallback(
-    async (blob: Blob) => {
-      setBusy('transcribing…')
-      setError(null)
-      try {
-        const form = new FormData()
-        // The extension matters: Whisper reads the container via ffmpeg, which
-        // sniffs the file, and a wrong name makes the failure obscure.
-        form.append('audio', blob, blob.type.includes('mp4') ? 'recording.mp4' : 'recording.webm')
-        const res = await fetch('/api/voice/transcribe', { method: 'POST', body: form })
-        const body = await res.json()
-        if (!res.ok) throw new Error([body.error, body.hint].filter(Boolean).join(' — '))
-        if (!body.text?.trim()) {
-          setError('nothing was heard in that recording')
-          return
-        }
-        onTranscript(body.text.trim())
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
-      } finally {
-        setBusy(null)
-      }
-    },
-    [onTranscript],
-  )
-
-  async function startRecording() {
-    if (recording || disabled) return
-    setError(null)
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const recorder = new MediaRecorder(stream)
-      chunksRef.current = []
-      recorder.ondataavailable = (e) => e.data.size > 0 && chunksRef.current.push(e.data)
-      recorder.onstop = () => {
-        // Release the mic as soon as the take ends — leaving the track live
-        // keeps the browser's recording indicator on and the device open.
-        stream.getTracks().forEach((t) => t.stop())
-        const blob = new Blob(chunksRef.current, { type: recorder.mimeType })
-        if (blob.size > 0) transcribe(blob)
-      }
-      recorder.start()
-      recorderRef.current = recorder
-      setRecording(true)
-    } catch (err) {
-      setError(`microphone unavailable: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-
-  function stopRecording() {
-    if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
-    recorderRef.current = null
-    setRecording(false)
-  }
 
   // Speak each new agent reply once. The ref guards against React re-running
   // this for the same text and talking over itself.
@@ -133,7 +65,8 @@ export function VoiceControls({
     spokenRef.current = speakingText
 
     let live = true
-    setBusy('speaking…')
+    setSpeaking(true)
+    setSpeakError(null)
     fetch('/api/voice/speak', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -153,8 +86,8 @@ export function VoiceControls({
         audio.onended = () => URL.revokeObjectURL(url)
         return audio.play()
       })
-      .catch((err) => live && setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => live && setBusy(null))
+      .catch((err) => live && setSpeakError(err instanceof Error ? err.message : String(err)))
+      .finally(() => live && setSpeaking(false))
     return () => {
       live = false
     }
@@ -214,7 +147,7 @@ export function VoiceControls({
             </button>
 
             <span className="font-mono text-[10px] text-muted-foreground">
-              via {status.backend}
+              via {status.backend ?? 'local'}
               {spokenVoice ? ` · ${spokenVoice}` : ''}
             </span>
           </>

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { CruisePanel } from '@/components/agent/cruise-panel'
 import { MissionsPanel } from '@/components/agent/missions-panel'
+import { useDictation } from '@/lib/voice/use-dictation'
 import { DriveTerminalWorkspace, type DriveTerminalWorkspaceHandle } from '@/components/terminal/drive-terminal-workspace'
 import { SkillFeedbackBar } from '@/components/skill-feedback-bar'
 import { ThinkingTrace } from '@/components/thinking-trace'
@@ -323,13 +324,16 @@ export default function AgentPage() {
   const [currentBranch, setCurrentBranch] = useState<string | null>(null)
   const [hasPendingDiff, setHasPendingDiff] = useState(false)
   const [thinkingCollapsed, setThinkingCollapsed] = useState(false)
-  // Voice input — Web Speech API, same small lift as Shard (mobile chat).
-  // The Voice/Type toggle lives in the composer; voice mode appends the
-  // transcript into the same input the user can still edit, then sends like
-  // any other typed request.
+  // Voice input — local only. Transcription happens on this host via Whisper
+  // (see src/lib/voice/use-dictation.ts); nothing leaves the machine. The
+  // Voice/Type toggle appends the transcript into the same input the user can
+  // still edit, then sends like any other typed request.
   const [inputMode, setInputMode] = useState<'type' | 'voice'>('type')
-  const [voiceListening, setVoiceListening] = useState(false)
-  const voiceRecRef = useRef<{ stop: () => void } | null>(null)
+  const appendTranscript = useCallback((text: string) => {
+    setInput((prev) => (prev.trim() ? `${prev.trimEnd()} ${text}` : text))
+  }, [])
+  const dictation = useDictation(appendTranscript)
+  const voiceListening = dictation.recording
 
   // File tree state
   const [filePaths, setFilePaths] = useState<string[]>([])
@@ -1005,33 +1009,6 @@ USER REQUEST: ${userText}`
       handleSend()
     }
   }
-
-  // Toggle speech recognition on/off. Appends recognized text to the input
-  // (interim results live-update, final result lands permanently), so voice
-  // and typing compose together. No-op where the Web Speech API is absent.
-  const handleVoiceToggle = useCallback(() => {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) return
-    if (voiceListening) {
-      try { voiceRecRef.current?.stop() } catch { /* ignore */ }
-      setVoiceListening(false)
-      return
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
-    const recognition = new SpeechRecognition()
-    recognition.interimResults = true
-    recognition.continuous = false
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript
-      setInput((prev) => prev + transcript)
-    }
-    recognition.onend = () => setVoiceListening(false)
-    recognition.onerror = () => setVoiceListening(false)
-    voiceRecRef.current = recognition
-    setVoiceListening(true)
-    recognition.start()
-  }, [voiceListening])
 
   const discardProposal = (idx: number) => {
     setLines((l) => l.filter((_, j) => j !== idx))
@@ -1820,7 +1797,8 @@ USER REQUEST: ${userText}`
               </div>
             )}
 
-              {/* Input mode toggle: Type / Voice — Voice uses the Web Speech API */}
+              {/* Input mode toggle: Type / Voice — Voice records here and is
+                  transcribed by Whisper on the host, never sent to a third party. */}
               <div className="mb-2 flex items-center gap-2">
                 <div className="flex items-center gap-0.5 rounded border border-border bg-surface-secondary p-0.5">
                   <button onClick={() => setInputMode('type')} disabled={running || voiceListening}
@@ -1830,16 +1808,16 @@ USER REQUEST: ${userText}`
                     title="Type mode — keyboard input">
                     <Keyboard className="h-3 w-3" /> Type
                   </button>
-                  <button onClick={() => setInputMode('voice')} disabled={running}
+                  <button onClick={() => setInputMode('voice')} disabled={running || dictation.status?.available === false}
                     className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors disabled:opacity-40 ${
                       inputMode === 'voice' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
                     }`}
-                    title="Voice mode — dictate your request (Web Speech API)">
+                    title="Voice mode — dictate your request (transcribed locally)">
                     <Mic className="h-3 w-3" /> Voice
                   </button>
                 </div>
                 {inputMode === 'voice' && (
-                  <button onClick={handleVoiceToggle} disabled={!hasRepo}
+                  <button onClick={dictation.toggle} disabled={!hasRepo || !!dictation.busy}
                     className={`flex items-center gap-1.5 rounded border px-2.5 py-1.5 font-mono text-[10px] transition-colors disabled:opacity-40 ${
                       voiceListening
                         ? 'border-destructive/40 bg-destructive/10 text-destructive'
@@ -1849,6 +1827,21 @@ USER REQUEST: ${userText}`
                     {voiceListening ? <MicOff className="h-3 w-3 animate-pulse" /> : <Mic className="h-3 w-3" />}
                     {voiceListening ? 'Listening…' : 'Speak'}
                   </button>
+                )}
+                {dictation.busy && (
+                  <span className="font-mono text-[10px] text-muted-foreground">{dictation.busy}</span>
+                )}
+                {/* Whisper lives on this host, so unavailable is a routine
+                    state rather than an error — say which and leave Type
+                    working, never a mic button that records into nothing. */}
+                {dictation.status?.available === false && (
+                  <span className="font-mono text-[10px] text-warning">
+                    voice unavailable — {dictation.status.reason}
+                    {dictation.status.hint ? ` · ${dictation.status.hint}` : ''}
+                  </span>
+                )}
+                {dictation.error && (
+                  <span className="font-mono text-[10px] text-destructive">{dictation.error}</span>
                 )}
               </div>
 
