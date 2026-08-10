@@ -35,8 +35,9 @@ export async function GET(_req: Request, ctx: RouteCtx) {
     const validations = events
       .filter((e) => e.type === 'task.validated' && e.taskId)
       .reduce<Record<string, unknown>>((acc, e) => {
-        // listEvents is newest-first, so the first one seen per task wins.
-        if (e.taskId && !acc[e.taskId]) acc[e.taskId] = e.payload
+        // listEvents is oldest-first, so LAST write wins — a re-validated task
+        // must show its latest verdict, not the one it got the first time.
+        if (e.taskId) acc[e.taskId] = e.payload
         return acc
       }, {})
 

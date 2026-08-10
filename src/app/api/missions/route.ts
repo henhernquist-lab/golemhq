@@ -13,6 +13,7 @@
 
 import { auth } from '@/lib/auth'
 import { listMissions, listAgents, getDetections, listAgentInstructions } from '@/lib/missions/store'
+import { CHAT_REPO_PREFIX } from '@/lib/missions/agent-chat'
 import type { AgentDetectionRecord } from '@/lib/missions/store'
 
 export const runtime = 'nodejs'
@@ -25,7 +26,12 @@ export async function GET(req: Request) {
   const repo = new URL(req.url).searchParams.get('repo') ?? undefined
 
   try {
-    const [missions, agents] = await Promise.all([listMissions(repo), listAgents()])
+    const [allMissions, agents] = await Promise.all([listMissions(repo), listAgents()])
+
+    // Agent chats are stored as missions (see agent-chat.ts) but are not
+    // missions in any sense a human means. Without this they would flood the
+    // dashboard, one row per conversation.
+    const missions = allMissions.filter((m) => !m.repo.startsWith(CHAT_REPO_PREFIX))
 
     // Detection columns arrive in a later migration than the roster. An
     // unreadable ledger means "nothing checked yet", not a broken page —

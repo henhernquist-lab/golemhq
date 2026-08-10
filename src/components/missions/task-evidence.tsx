@@ -171,8 +171,9 @@ export function TaskEvidencePanel({ taskId }: { taskId: string }) {
           timeline ({data.events.length})
         </h4>
         <ul className="space-y-0.5">
-          {/* Oldest first: this is a history, and a history reads forwards. */}
-          {[...data.events].reverse().map((e) => (
+          {/* listEvents already returns oldest-first, which is how a history
+              reads. Reversing here put the timeline backwards. */}
+          {data.events.map((e) => (
             <li key={e.id} className="flex gap-2 font-mono text-[10px]">
               <span className="shrink-0 text-muted-foreground">{stamp(e.ts)}</span>
               <span className="shrink-0 text-foreground">{e.type}</span>

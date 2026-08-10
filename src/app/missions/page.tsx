@@ -20,10 +20,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
-import { ArrowLeft, ListTree, Pencil, Plus, RefreshCw, Server } from 'lucide-react'
+import { ArrowLeft, ListTree, MessageSquare, Pencil, Plus, RefreshCw, Server } from 'lucide-react'
 
 import { TaskEvidencePanel } from '@/components/missions/task-evidence'
 import { HireWorkerPanel, type EditableAgent } from '@/components/missions/hire-worker'
+import { AgentChatPanel } from '@/components/missions/agent-chat-panel'
 
 import type { Agent, Mission, Task, TaskStatus, MissionStatus } from '@/lib/missions/types'
 import { AGENT_LAYER_LABELS } from '@/lib/missions/types'
@@ -95,6 +96,7 @@ export default function MissionsPage() {
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   const [hiring, setHiring] = useState(false)
   const [editing, setEditing] = useState<EditableAgent | null>(null)
+  const [chatAgent, setChatAgent] = useState<{ id: string; name: string; cliCommand: string | null } | null>(null)
 
   const loadList = useCallback(async () => {
     try {
@@ -313,6 +315,14 @@ export default function MissionsPage() {
             </button>
           </div>
 
+          {chatAgent && (
+            <AgentChatPanel
+              key={chatAgent.id}
+              agent={chatAgent}
+              onClose={() => setChatAgent(null)}
+            />
+          )}
+
           {(hiring || editing) && (
             <HireWorkerPanel
               agent={editing ?? undefined}
@@ -380,9 +390,27 @@ export default function MissionsPage() {
                       )}
                     </td>
                     <td className="px-3 py-2">
+                      <div className="flex items-center gap-2">
+                      {/* Only agents with a CLI can be chatted with — the
+                          orchestrators and validators have nothing to run. */}
+                      {a.cliCommand && (
+                        <button
+                          onClick={() => {
+                            setHiring(false)
+                            setEditing(null)
+                            setChatAgent({ id: a.id, name: a.name, cliCommand: a.cliCommand })
+                          }}
+                          className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground transition-colors hover:text-primary"
+                          aria-label={`chat with ${a.name}`}
+                        >
+                          <MessageSquare className="h-3 w-3" />
+                          chat
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           setHiring(false)
+                          setChatAgent(null)
                           setEditing({
                             id: a.id,
                             name: a.name,
@@ -397,6 +425,7 @@ export default function MissionsPage() {
                       >
                         <Pencil className="h-3 w-3" />
                       </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
