@@ -94,3 +94,18 @@ install_blender() {
   echo "postCreate: $("$prefix/blender/blender" --version | head -1) ready"
 }
 install_blender
+
+# ─── Voice mode (Whisper STT + Kokoro TTS) ────────────────────────────
+# Delegated to scripts/setup-voice.sh rather than inlined, because unlike
+# Blender this one has to be runnable on demand too: the venv lives on /tmp
+# (the only volume here with room) and a Codespace RESTART wipes /tmp without
+# re-running postCreate. Voice mode detects the missing venv and points the
+# user at that script, so this is the convenience path, not the only path.
+install_voice() {
+  local script="/workspaces/enry.agent/scripts/setup-voice.sh"
+  [ -f "$script" ] || { echo "postCreate: no setup-voice.sh, skipping voice"; return 0; }
+  # Never fatal: a failed voice install must not stop the rest of postCreate,
+  # and the app degrades to Type mode with a message either way.
+  bash "$script" || echo "postCreate: WARN voice setup failed — run it by hand for voice mode"
+}
+install_voice

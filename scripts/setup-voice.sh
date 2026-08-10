@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Build the Python environment voice mode needs: Whisper for speech→text,
+# Kokoro for text→speech.
+#
+# ─── Where this lives, and why it is not $HOME ────────────────────────
+# Measured, not assumed:
+#
+#   /            survives a Codespace restart, ~500MB free   (99% full)
+#   /tmp         wiped on restart, 40GB free
+#
+# The only volume with room is the only one that does not persist. There is no
+# third option, so the venv goes on /tmp and this script exists to rebuild it.
+# A Codespace RESTART wipes /tmp without re-running postCreate, so this cannot
+# be a create-time-only step — voice mode probes for the venv and points the
+# user here when it is missing, rather than failing with an import error.
+#
+# ─── Why CPU-only torch ───────────────────────────────────────────────
+# The previous ad-hoc install pulled torch 2.13+cu130 and cost 4.9GB for a
+# machine with no GPU. The CPU wheels are a fraction of that and neither model
+# can use CUDA here anyway. Kokoro is 82M params and Whisper base is 74M —
+# both are comfortable on CPU.
+#
+# Model weights are NOT in the venv: Kokoro's live in ~/.cache/huggingface and
+# Whisper's in ~/.cache/whisper, both on the persistent volume. Only the
+# packages need rebuilding, which is what makes this cheap to re-run.
+#
+# Usage:  bash scripts/setup-voice.sh [--force]
+
+set -euo pipefail
+
+# pip's wheel cache lands in $HOME on the 99%-full root volume and grew to
+# 582MB during one run of this script, taking the filesystem to 45MB free.
+# That is not a tidiness issue: the last time / hit 100%, a concurrent write
+# truncated .env.local to zero bytes. The venv is disposable, so caching the
+# wheels that build it buys nothing worth that risk.
+export PIP_NO_CACHE_DIR=1
+
+VENV="${GOLEM_VOICE_VENV:-/tmp/golem-voice-venv}"
+PY="$VENV/bin/python"
+
+if [ "${1:-}" = "--force" ]; then
+  echo "removing $VENV"
+  rm -rf "$VENV"
+fi
+
+# espeak-ng is a system package, not a pip one: Kokoro shells out to it for
+# phonemisation and fails at synthesis time without it. It lives on / and so
+# survives restarts — checked rather than blindly reinstalled.
+if ! command -v espeak-ng >/dev/null 2>&1; then
+  echo "installing espeak-ng (required by Kokoro for phonemisation)…"
+  sudo apt-get update -qq
+  sudo apt-get install -y espeak-ng
+fi
+echo "espeak-ng: $(espeak-ng --version 2>&1 | head -1)"
+
+if [ -x "$PY" ] && "$PY" -c "import whisper, kokoro, soundfile" >/dev/null 2>&1; then
+  echo "voice venv already complete at $VENV"
+  "$PY" -c "import whisper, torch; print(f'whisper {whisper.__version__}, torch {torch.__version__}')"
+  exit 0
+fi
+
+echo "building voice venv at $VENV …"
+python3 -m venv "$VENV"
+"$PY" -m pip install -q --upgrade pip
+
+# CPU wheels explicitly. Without the index override pip resolves the CUDA
+# build, which is several gigabytes of driver payload this host cannot use.
+echo "installing torch (CPU wheels)…"
+"$PY" -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+
+echo "installing whisper + kokoro…"
+"$PY" -m pip install -q openai-whisper "kokoro>=0.9.4" soundfile
+
+"$PY" -c "import whisper, kokoro, soundfile, torch; print(f'ok — whisper {whisper.__version__}, torch {torch.__version__}')"
+echo "done. venv: $VENV"

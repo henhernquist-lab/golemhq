@@ -4,13 +4,24 @@ import { defineConfig, devices } from 'playwright/test'
 // Playwright does not read .env.local; Next.js does. Without this, every test
 // gated on E2E_EMAIL/E2E_PASSWORD SKIPS even when the credentials are sitting
 // right there — and a skip reads as "nothing to see here", not as a problem.
-// Real environment wins, so CI can still inject its own.
+//
+// This cannot delegate to scripts/load-env.mjs the way the scripts do:
+// Playwright transpiles this config to CJS and `require`s it, so importing an
+// ESM module here fails at load time. The parser is therefore inlined — but
+// with the inline-comment handling that the old `(.*)` version lacked. That
+// omission is what once turned SPRITES_TOKEN into 196 characters of
+// credential-plus-comment and had it read as a dead token for weeks.
 try {
   for (const line of readFileSync('.env.local', 'utf8').split('\n')) {
-    const match = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim())
-    if (match && !process.env[match[1]]) {
-      process.env[match[1]] = match[2].replace(/^["']|["']$/g, '')
-    }
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const match = /^([A-Z0-9_]+)=(.*)$/.exec(trimmed)
+    if (!match || process.env[match[1]] !== undefined) continue
+    const raw = match[2]
+    const quoted = /^\s*(['"])([\s\S]*?)\1\s*(?:#.*)?$/.exec(raw)
+    // Unquoted values end at the first ` #`; quoted ones keep everything
+    // between the quotes, exactly as dotenv treats them.
+    process.env[match[1]] = quoted ? quoted[2] : raw.replace(/\s+#.*$/, '').trim()
   }
 } catch {
   /* no .env.local — credentials must come from the real environment */
