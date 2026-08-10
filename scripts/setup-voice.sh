@@ -53,9 +53,32 @@ if ! command -v espeak-ng >/dev/null 2>&1; then
 fi
 echo "espeak-ng: $(espeak-ng --version 2>&1 | head -1)"
 
+# Kokoro fetches a voice pack from Hugging Face the first time each voice is
+# used. That cache lives on / and so survives the /tmp wipes this whole script
+# exists to recover from — but an un-warmed pack means the first "preview" click
+# in the UI is a network round trip that fails outright on a host with no
+# egress. Pulled ahead of time, and never fatal: a missing pack costs a slow
+# first play, not a broken install.
+#
+# Kept in sync by hand with DEFAULT_ROTATION in src/lib/voice/voices.ts — these
+# are the voices an agent gets without anyone choosing one.
+warm_voices() {
+  echo "warming default voice packs…"
+  "$PY" - <<'PYWARM' || echo "  (could not pre-fetch voice packs — first playback will download them)"
+from huggingface_hub import hf_hub_download
+for voice in ("bm_george", "af_heart", "am_adam", "bf_emma"):
+    try:
+        hf_hub_download("hexgrad/Kokoro-82M", f"voices/{voice}.pt")
+        print(f"  {voice}")
+    except Exception as err:
+        print(f"  {voice}: {err}")
+PYWARM
+}
+
 if [ -x "$PY" ] && "$PY" -c "import whisper, kokoro, soundfile" >/dev/null 2>&1; then
   echo "voice venv already complete at $VENV"
   "$PY" -c "import whisper, torch; print(f'whisper {whisper.__version__}, torch {torch.__version__}')"
+  warm_voices
   exit 0
 fi
 
@@ -72,4 +95,5 @@ echo "installing whisper + kokoro…"
 "$PY" -m pip install -q openai-whisper "kokoro>=0.9.4" soundfile
 
 "$PY" -c "import whisper, kokoro, soundfile, torch; print(f'ok — whisper {whisper.__version__}, torch {torch.__version__}')"
+warm_voices
 echo "done. venv: $VENV"

@@ -13,6 +13,7 @@ import { requireHenryOwner } from '@/lib/auth-owner'
 import { createAgent, recordDetection, type CreateAgentInput } from '@/lib/missions/store'
 import { detectClis } from '@/lib/missions/cli-detect'
 import { AGENT_LAYERS, type AgentLayer } from '@/lib/missions/types'
+import { isVoiceId } from '@/lib/voice/voices'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -23,6 +24,7 @@ interface HireBody {
   layer?: unknown
   cliCommand?: unknown
   instructions?: unknown
+  voiceId?: unknown
   enabled?: unknown
   /** Sweep the builder host straight after hiring, so the roster shows a real
    *  detected path instead of "never checked" until someone runs a script. */
@@ -48,6 +50,13 @@ export async function POST(req: Request) {
     return Response.json({ error: `layer must be one of ${AGENT_LAYERS.join(', ')}` }, { status: 400 })
   }
 
+  // Absent voiceId is left off the insert entirely rather than sent as null:
+  // the column may not exist yet, and a hire that names no voice has no reason
+  // to touch it. Omitting it keeps hiring working before the migration lands.
+  if (body.voiceId !== undefined && body.voiceId !== null && !isVoiceId(body.voiceId)) {
+    return Response.json({ error: `unknown voice ${String(body.voiceId).slice(0, 40)}` }, { status: 400 })
+  }
+
   const input: CreateAgentInput = {
     name,
     layer: layer as AgentLayer,
@@ -55,6 +64,7 @@ export async function POST(req: Request) {
     instructions: typeof body.instructions === 'string' ? body.instructions : null,
     enabled: body.enabled !== false,
   }
+  if (isVoiceId(body.voiceId)) input.voiceId = body.voiceId
 
   try {
     const agent = await createAgent(input)

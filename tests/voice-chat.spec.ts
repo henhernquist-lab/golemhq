@@ -90,11 +90,15 @@ test.describe('voice mode', () => {
         body: JSON.stringify({ text: 'hello' }),
       })
       const status = await fetch('/api/voice', { cache: 'no-store' })
-      return { speak: speak.status, status: status.status }
+      const voices = await fetch('/api/voice/voices', { cache: 'no-store' })
+      return { speak: speak.status, status: status.status, voices: voices.status }
     })
 
     expect(results.speak, 'a non-owner was allowed to synthesise speech').toBe(403)
     expect(results.status, 'a non-owner could read voice status').toBe(403)
+    // The catalog looks harmless, but it also reports which voice every agent
+    // uses — roster shape, and it shares the picker's preview endpoint.
+    expect(results.voices, 'a non-owner could read the voice catalog').toBe(403)
   })
 
   test('voice mode degrades to type rather than failing silently', async ({ page }) => {

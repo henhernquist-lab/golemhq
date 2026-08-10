@@ -31,6 +31,7 @@ export function VoiceControls({
   onModeChange,
   onTranscript,
   speakingText,
+  agentId,
   disabled,
 }: {
   mode: VoiceMode
@@ -39,6 +40,8 @@ export function VoiceControls({
   onTranscript: (text: string) => void
   /** Latest agent reply to read aloud, or null. */
   speakingText: string | null
+  /** Whose voice to speak in. The server resolves it — see /api/voice/speak. */
+  agentId?: string
   disabled?: boolean
 }) {
   const [status, setStatus] = useState<VoiceStatus | null>(null)
@@ -46,6 +49,10 @@ export function VoiceControls({
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [speakReplies, setSpeakReplies] = useState(true)
+  // Reported by the server rather than assumed from the agent: if the backend
+  // has no named voices, or the chosen one has left the catalog, this is what
+  // actually spoke.
+  const [spokenVoice, setSpokenVoice] = useState<string | null>(null)
 
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -130,13 +137,15 @@ export function VoiceControls({
     fetch('/api/voice/speak', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: speakingText }),
+      body: JSON.stringify({ text: speakingText, agentId }),
     })
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}))
           throw new Error([body.error, body.hint].filter(Boolean).join(' — ') || `HTTP ${res.status}`)
         }
+        const voice = res.headers.get('X-Voice-Id')
+        if (live) setSpokenVoice(voice && voice !== 'none' ? voice : null)
         const url = URL.createObjectURL(await res.blob())
         if (!live) return URL.revokeObjectURL(url)
         const audio = new Audio(url)
@@ -149,7 +158,7 @@ export function VoiceControls({
     return () => {
       live = false
     }
-  }, [mode, speakReplies, speakingText, status?.available])
+  }, [mode, speakReplies, speakingText, status?.available, agentId])
 
   const unavailable = status && !status.available
 
@@ -204,7 +213,10 @@ export function VoiceControls({
               {speakReplies ? 'replies spoken' : 'replies muted'}
             </button>
 
-            <span className="font-mono text-[10px] text-muted-foreground">via {status.backend}</span>
+            <span className="font-mono text-[10px] text-muted-foreground">
+              via {status.backend}
+              {spokenVoice ? ` · ${spokenVoice}` : ''}
+            </span>
           </>
         )}
 

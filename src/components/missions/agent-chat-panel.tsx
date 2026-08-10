@@ -19,6 +19,8 @@ interface ChatAgent {
   id: string
   name: string
   cliCommand: string | null
+  /** Only for the header label — the server resolves the real voice by id. */
+  voiceId?: string | null
 }
 
 function ToolCallRow({ call }: { call: ToolCall }) {
@@ -133,6 +135,11 @@ export function AgentChatPanel({ agent, onClose }: { agent: ChatAgent; onClose: 
           <Terminal className="h-3.5 w-3.5 text-primary" />
           <span className="font-mono text-xs text-foreground">{agent.name}</span>
           <span className="font-mono text-[10px] text-muted-foreground">{agent.cliCommand}</span>
+          {agent.voiceId && (
+            <span className="font-mono text-[10px] text-muted-foreground" title="the voice this agent speaks in">
+              · {agent.voiceId}
+            </span>
+          )}
         </div>
         <button onClick={onClose} className="text-muted-foreground hover:text-primary">
           <X className="h-3.5 w-3.5" />
@@ -198,6 +205,9 @@ export function AgentChatPanel({ agent, onClose }: { agent: ChatAgent; onClose: 
         // A transcript is sent straight through rather than dropped in the box
         // for confirmation — the point of speaking is not having to type.
         onTranscript={(text) => send(text)}
+        // The id, not the voice: sending a voice id from the client would let a
+        // stale panel keep speaking in a voice Henry has since changed.
+        agentId={agent.id}
         speakingText={
           mode === 'voice' && !sending
             ? [...messages].reverse().find((m) => m.role === 'agent')?.content ?? null

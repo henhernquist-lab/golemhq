@@ -14,6 +14,7 @@
 import { requireHenryOwner } from '@/lib/auth-owner'
 import { getAgentById, recordDetection, updateAgent, type UpdateAgentInput } from '@/lib/missions/store'
 import { detectClis } from '@/lib/missions/cli-detect'
+import { isVoiceId } from '@/lib/voice/voices'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -41,6 +42,7 @@ interface PatchBody {
   name?: unknown
   cliCommand?: unknown
   instructions?: unknown
+  voiceId?: unknown
   enabled?: unknown
   /** Run CLI detection right after saving, so the roster stops saying "never checked". */
   detect?: unknown
@@ -68,6 +70,16 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
     patch.instructions = body.instructions as string | null
   }
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled
+  // The allowlist is enforced here rather than in the database, so an unknown
+  // id is a 400 the form can show instead of a constraint violation. null is a
+  // legitimate value — it hands the agent back to the rotation.
+  if (body.voiceId === null) patch.voiceId = null
+  else if (body.voiceId !== undefined) {
+    if (!isVoiceId(body.voiceId)) {
+      return Response.json({ error: `unknown voice ${String(body.voiceId).slice(0, 40)}` }, { status: 400 })
+    }
+    patch.voiceId = body.voiceId
+  }
 
   try {
     const existing = await getAgentById(id)

@@ -15,6 +15,8 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 
+import { FALLBACK_VOICE, isVoiceId, langCodeFor } from './voices'
+
 const execFileAsync = promisify(execFile)
 
 export const VOICE_VENV = process.env.GOLEM_VOICE_VENV ?? '/tmp/golem-voice-venv'
@@ -23,7 +25,8 @@ const SETUP_HINT = 'run `bash scripts/setup-voice.sh` on the host (the venv live
 
 /** Whisper base: 74M params, no GPU needed, good enough for dictation. */
 const WHISPER_MODEL = process.env.WHISPER_MODEL ?? 'base'
-const KOKORO_VOICE = process.env.KOKORO_VOICE ?? 'af_heart'
+/** Used only when a caller names no voice at all — see src/lib/voice/voices.ts. */
+const KOKORO_VOICE = isVoiceId(process.env.KOKORO_VOICE) ? process.env.KOKORO_VOICE : FALLBACK_VOICE
 const SAMPLE_RATE = 24_000
 
 export class VoiceUnavailableError extends Error {
@@ -145,13 +148,21 @@ export interface SpeechResult {
   /** MIME type of `audio`, for the browser to play directly. */
   contentType: string
   backend: TtsBackendName
+  /**
+   * The voice pack that actually spoke, or null when the backend has no named
+   * voices. Reported rather than assumed: a caller that asked for bm_george and
+   * got null learns that per-agent voices are not in effect, instead of
+   * wondering why every agent suddenly sounds the same.
+   */
+  voice: string | null
   durationMs: number
 }
 
 export interface TtsBackend {
   readonly name: TtsBackendName
   readonly available: () => Promise<boolean>
-  readonly speak: (text: string) => Promise<SpeechResult>
+  /** `voice` is a Kokoro voice id; backends without named voices ignore it. */
+  readonly speak: (text: string, voice: string) => Promise<SpeechResult>
 }
 
 export function activeTtsBackend(): TtsBackendName {
@@ -161,7 +172,7 @@ export function activeTtsBackend(): TtsBackendName {
 const kokoroBackend: TtsBackend = {
   name: 'kokoro',
   available: async () => (await voiceStatus()).available,
-  async speak(text: string): Promise<SpeechResult> {
+  async speak(text: string, voice: string): Promise<SpeechResult> {
     await requirePython()
     const started = Date.now()
     const dir = await mkdtemp(join(tmpdir(), 'golem-tts-'))
@@ -170,23 +181,27 @@ const kokoroBackend: TtsBackend = {
       // Kokoro yields one chunk per sentence-ish segment; they are concatenated
       // rather than played in sequence so the browser gets a single file it can
       // seek and replay.
+      //
+      // The voice and its lang_code travel as argv, not interpolated source:
+      // these values reach here from a database column, and a voice id spliced
+      // into a Python literal is an injection point one bad row wide.
       const script = `
 import sys, numpy as np, soundfile as sf
 from kokoro import KPipeline
-text, out = sys.argv[1], sys.argv[2]
-pipe = KPipeline(lang_code='a')
-chunks = [audio for _, _, audio in pipe(text, voice=${JSON.stringify(KOKORO_VOICE)})]
+text, out, voice, lang = sys.argv[1:5]
+pipe = KPipeline(lang_code=lang)
+chunks = [audio for _, _, audio in pipe(text, voice=voice)]
 if not chunks:
     raise SystemExit("kokoro produced no audio")
 sf.write(out, np.concatenate(chunks) if len(chunks) > 1 else chunks[0], ${SAMPLE_RATE})
 `.trim()
-      await execFileAsync(PYTHON, ['-c', script, text, outPath], {
+      await execFileAsync(PYTHON, ['-c', script, text, outPath, voice, langCodeFor(voice)], {
         timeout: 180_000,
         maxBuffer: 8 * 1024 * 1024,
       })
       const audio = await readFile(outPath)
       if (audio.byteLength < 100) throw new VoiceUnavailableError('Kokoro wrote an empty audio file')
-      return { audio, contentType: 'audio/wav', backend: 'kokoro', durationMs: Date.now() - started }
+      return { audio, contentType: 'audio/wav', backend: 'kokoro', voice, durationMs: Date.now() - started }
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -218,6 +233,11 @@ const fishBackend: TtsBackend = {
       audio: Buffer.from(await res.arrayBuffer()),
       contentType: 'audio/mpeg',
       backend: 'fish',
+      // Kokoro voice ids mean nothing to Fish Audio, and there is no honest
+      // mapping between the two catalogs. Null says so: switching TTS_BACKEND
+      // to fish turns per-agent voices OFF, and the caller can see that rather
+      // than believe a voice id it passed was honoured.
+      voice: null,
       durationMs: Date.now() - started,
     }
   },
@@ -229,11 +249,21 @@ export function ttsBackend(name: TtsBackendName = activeTtsBackend()): TtsBacken
   return BACKENDS[name]
 }
 
-export async function speak(text: string, name: TtsBackendName = activeTtsBackend()): Promise<SpeechResult> {
+export interface SpeakOptions {
+  /** Kokoro voice id. Unknown ids fall back rather than throwing — see below. */
+  voice?: string | null
+  backend?: TtsBackendName
+}
+
+export async function speak(text: string, options: SpeakOptions = {}): Promise<SpeechResult> {
   const trimmed = text.trim()
   if (!trimmed) throw new VoiceUnavailableError('nothing to speak')
   // Long replies would take minutes to synthesise and longer to listen to.
   // Truncated at a sentence boundary where possible so it does not cut mid-word.
   const capped = trimmed.length > 1200 ? `${trimmed.slice(0, 1200).replace(/\s+\S*$/, '')}…` : trimmed
-  return ttsBackend(name).speak(capped)
+  // A voice that has left the catalog — or a row written before it was
+  // curated — degrades to a working voice instead of making the agent mute.
+  // The result reports what actually spoke, so the swap is visible.
+  const voice = isVoiceId(options.voice) ? options.voice : KOKORO_VOICE
+  return ttsBackend(options.backend ?? activeTtsBackend()).speak(capped, voice)
 }

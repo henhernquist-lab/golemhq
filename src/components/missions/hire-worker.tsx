@@ -13,6 +13,7 @@ import { useState } from 'react'
 import { Loader2, Plus, X } from 'lucide-react'
 
 import { AGENT_LAYER_LABELS, type AgentLayer } from '@/lib/missions/types'
+import { VoicePicker } from './voice-picker'
 
 export interface EditableAgent {
   id: string
@@ -21,6 +22,10 @@ export interface EditableAgent {
   cliCommand: string | null
   enabled: boolean
   instructions: string | null
+  /** Null means nobody has chosen — the rotation decides. */
+  voiceId: string | null
+  /** What the rotation would give it, so the form can name the current default. */
+  defaultVoiceId?: string | null
 }
 
 type Mode = 'cli' | 'custom'
@@ -46,6 +51,7 @@ export function HireWorkerPanel({
   const [layer, setLayer] = useState<AgentLayer>(agent?.layer ?? 2)
   const [cliCommand, setCliCommand] = useState(agent?.cliCommand ?? '')
   const [instructions, setInstructions] = useState(agent?.instructions ?? '')
+  const [voiceId, setVoiceId] = useState<string | null>(agent?.voiceId ?? null)
   const [enabled, setEnabled] = useState(agent?.enabled ?? true)
   const [detect, setDetect] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -64,6 +70,9 @@ export function HireWorkerPanel({
         // the CLI rather than leaving a stale one behind the form.
         cliCommand: mode === 'cli' ? cliCommand : null,
         instructions: instructions.trim() ? instructions : null,
+        // null is meaningful, not "unset": it hands the agent back to the
+        // rotation, which is the only way to undo a choice.
+        voiceId,
         enabled,
         detect: detect && mode === 'cli',
       }
@@ -164,6 +173,7 @@ export function HireWorkerPanel({
             prepended to every task prompt this agent runs
           </span>
         </label>
+        <VoicePicker value={voiceId} onChange={setVoiceId} fallbackVoice={agent?.defaultVoiceId ?? null} />
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-4">

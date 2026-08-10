@@ -567,6 +567,54 @@ export async function listAgentInstructions(): Promise<Map<string, string>> {
   return out
 }
 
+// ── Agent voices ──────────────────────────────────────────────────────
+// Same tolerant-column pattern as instructions above: `voice_id` arrives in
+// 20260810120000_agent_voice.sql. Absent, every agent still SPEAKS — the
+// rotation default in src/lib/voice/voices.ts covers that — it just cannot
+// remember a voice Henry picked.
+
+const VOICE_MIGRATION = 'supabase/migrations/20260810120000_agent_voice.sql'
+
+function voiceColumnMissing(error: { message?: string; code?: string } | null): boolean {
+  return /column .*voice_id.* does not exist/i.test(error?.message ?? '') || isTableMissing(error)
+}
+
+/** Chosen voice for one agent, or null for "nobody has picked". */
+export async function getAgentVoice(agentId: string): Promise<string | null> {
+  const { data, error } = await supabase.from('agents').select('voice_id').eq('id', agentId).maybeSingle()
+  if (error) {
+    if (voiceColumnMissing(error)) return null
+    fail('getAgentVoice', error)
+  }
+  const value = (data as { voice_id?: string | null } | null)?.voice_id
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+/** Chosen voices for the whole roster. Empty map pre-migration. */
+export async function listAgentVoices(): Promise<Map<string, string>> {
+  const { data, error } = await supabase.from('agents').select('id, voice_id')
+  if (error) {
+    if (voiceColumnMissing(error)) return new Map()
+    fail('listAgentVoices', error)
+  }
+  const out = new Map<string, string>()
+  for (const row of (data ?? []) as { id: string; voice_id?: string | null }[]) {
+    if (typeof row.voice_id === 'string' && row.voice_id.trim()) out.set(row.id, row.voice_id)
+  }
+  return out
+}
+
+/**
+ * Every agent id, oldest first — the ordering the default voice rotation is
+ * indexed by. Unfiltered on purpose: hiding disabled agents here would shift
+ * the default voice of every agent created after one was switched off.
+ */
+export async function listAgentIdsByCreation(): Promise<string[]> {
+  const { data, error } = await supabase.from('agents').select('id').order('created_at', { ascending: true })
+  if (error) fail('listAgentIdsByCreation', error)
+  return ((data ?? []) as { id: string }[]).map((r) => r.id)
+}
+
 // ── Agent writes (owner-gated at the route layer) ─────────────────────
 
 export interface CreateAgentInput {
@@ -574,6 +622,7 @@ export interface CreateAgentInput {
   layer: AgentLayer
   cliCommand?: string | null
   instructions?: string | null
+  voiceId?: string | null
   enabled?: boolean
   strengths?: string[]
 }
@@ -582,6 +631,7 @@ export interface UpdateAgentInput {
   name?: string
   cliCommand?: string | null
   instructions?: string | null
+  voiceId?: string | null
   enabled?: boolean
 }
 
@@ -609,6 +659,7 @@ export async function createAgent(input: CreateAgentInput): Promise<Agent> {
   }
   const instructions = normaliseInstructions(input.instructions)
   if (instructions !== undefined) row.instructions = instructions
+  if (input.voiceId !== undefined) row.voice_id = input.voiceId?.trim() || null
 
   const { data, error } = await supabase
     .from('agents')
@@ -618,6 +669,9 @@ export async function createAgent(input: CreateAgentInput): Promise<Agent> {
     )
     .single()
   if (error) {
+    if (voiceColumnMissing(error)) {
+      throw new MissionStoreError(`createAgent: apply ${VOICE_MIGRATION} before choosing a voice.`, error)
+    }
     if (instructionsColumnMissing(error)) {
       throw new MissionStoreError(`createAgent: apply ${INSTRUCTIONS_MIGRATION} before setting instructions.`, error)
     }
@@ -636,6 +690,7 @@ export async function updateAgent(id: string, patch: UpdateAgentInput): Promise<
   if (patch.enabled !== undefined) row.enabled = patch.enabled
   const instructions = normaliseInstructions(patch.instructions)
   if (instructions !== undefined) row.instructions = instructions
+  if (patch.voiceId !== undefined) row.voice_id = patch.voiceId?.trim() || null
 
   if (Object.keys(row).length === 0) {
     const existing = await getAgentById(id)
@@ -652,6 +707,9 @@ export async function updateAgent(id: string, patch: UpdateAgentInput): Promise<
     )
     .single()
   if (error) {
+    if (voiceColumnMissing(error)) {
+      throw new MissionStoreError(`updateAgent: apply ${VOICE_MIGRATION} before choosing a voice.`, error)
+    }
     if (instructionsColumnMissing(error)) {
       throw new MissionStoreError(`updateAgent: apply ${INSTRUCTIONS_MIGRATION} before setting instructions.`, error)
     }
