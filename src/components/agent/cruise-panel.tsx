@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   Radar, Play, Loader2, ChevronRight, ShieldCheck, ShieldOff, AlertTriangle,
   CheckCircle2, XCircle, Ban, RotateCcw, Clock, FileCode, Check, Lock,
-  Target, GitPullRequest, Sparkles, CalendarClock, FileText,
+  Target, GitPullRequest, Sparkles, CalendarClock, FileText, MessageSquare,
 } from 'lucide-react'
 import type {
   CruiseRepo, CruiseScan, CruiseFinding, CruiseSeverity,
@@ -638,8 +638,8 @@ const GOAL_STATUS_LABEL: Record<CruiseGoalRun['status'], string> = {
 // resulting PR link. Scanfix runs have no planning phase and never pause for
 // clarification (that was goal-mode-only, now removed), so this renders a
 // smaller state machine than the run status enum technically allows for.
-function GoalRunCard({ run, steps, onExpand }: {
-  run: CruiseGoalRun; steps: CruiseGoalStep[]; onExpand: () => void
+export function GoalRunCard({ run, steps, onExpand, onChat }: {
+  run: CruiseGoalRun; steps: CruiseGoalStep[]; onExpand: () => void; onChat?: (run: CruiseGoalRun) => void
 }) {
   const [open, setOpen] = useState(false)
   const active = isGoalRunActive(run.status)
@@ -653,16 +653,24 @@ function GoalRunCard({ run, steps, onExpand }: {
 
   return (
     <div className="overflow-hidden rounded border border-border bg-surface-secondary">
-      <button onClick={() => { const next = !open; setOpen(next); if (next) onExpand() }} className="flex w-full items-center gap-2 px-3 py-2 text-left">
-        <ChevronRight className={`h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
-        {icon}
-        <Sparkles className="h-3 w-3 flex-shrink-0 text-primary" />
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">{run.goal}</span>
-        {run.trigger === 'scheduled' && (
-          <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">scheduled</span>
+      <div className="flex w-full items-center gap-2 px-3 py-2">
+        <button onClick={() => { const next = !open; setOpen(next); if (next) onExpand() }} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <ChevronRight className={`h-3 w-3 flex-shrink-0 text-muted-foreground transition-transform ${open ? 'rotate-90' : ''}`} />
+          {icon}
+          <Sparkles className="h-3 w-3 flex-shrink-0 text-primary" />
+          <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground">{run.goal}</span>
+          {run.trigger === 'scheduled' && (
+            <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-muted-foreground">scheduled</span>
+          )}
+          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{GOAL_STATUS_LABEL[run.status]}</span>
+        </button>
+        {onChat && (
+          <button onClick={() => onChat(run)} title="Open this mission in the Forge chat"
+            className="flex flex-shrink-0 items-center gap-1 rounded border border-border px-2 py-1 font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary">
+            <MessageSquare className="h-3 w-3" /> Chat
+          </button>
         )}
-        <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{GOAL_STATUS_LABEL[run.status]}</span>
-      </button>
+      </div>
       <AnimatePresence initial={false}>
         {open && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
@@ -715,7 +723,7 @@ function GoalRunCard({ run, steps, onExpand }: {
   )
 }
 
-function ScanRow({ scan, selected, onSelect }: { scan: CruiseScan; selected: boolean; onSelect: () => void }) {
+export function ScanRow({ scan, selected, onSelect }: { scan: CruiseScan; selected: boolean; onSelect: () => void }) {
   const icon = scan.status === 'completed' ? <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
     : scan.status === 'failed' ? <XCircle className="h-3.5 w-3.5 text-destructive" />
     : scan.status === 'partial' ? <AlertTriangle className="h-3.5 w-3.5 text-warning" />

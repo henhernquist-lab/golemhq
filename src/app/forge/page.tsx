@@ -9,8 +9,10 @@ import {
   ArrowLeft, ChevronDown, ChevronRight, Check, X, Send, Loader2,
   GitBranch, Folder, File, Lock, Sliders, Zap, TerminalSquare, Eye, Play,
   Car, Radar, Swords, FileText, Pencil, Brain, Globe, Plus, MessageSquare,
+  Mic, MicOff, Keyboard,
 } from 'lucide-react'
 import { CruisePanel } from '@/components/agent/cruise-panel'
+import { MissionsPanel } from '@/components/agent/missions-panel'
 import { DriveTerminalWorkspace, type DriveTerminalWorkspaceHandle } from '@/components/terminal/drive-terminal-workspace'
 import { SkillFeedbackBar } from '@/components/skill-feedback-bar'
 import { ThinkingTrace } from '@/components/thinking-trace'
@@ -299,10 +301,15 @@ export default function AgentPage() {
   // Top-level mode: Drive (interactive, the existing behavior) vs Cruise
   // (autonomous scan). Distinct from `mode` above, which is Drive's auto/manual.
   const [cruiseMode, setCruiseMode] = useState<'drive' | 'cruise'>('drive')
-  // Workspace mode: 'chat' (conversation only) vs 'command' (IDE terminals only).
-  // Both stay mounted so each workspace preserves its state across switches.
-  const [workspaceMode, setWorkspaceMode] = useState<'chat' | 'command'>(
-    () => (typeof window !== 'undefined' && localStorage.getItem('golem.drive.mode') === 'command' ? 'command' : 'chat'),
+  // Workspace mode: 'chat' (conversation only) vs 'missions' (read-only
+  // mission/task list) vs 'command' (IDE terminals only). All three stay
+  // mounted so each view preserves its state across switches.
+  const [workspaceMode, setWorkspaceMode] = useState<'chat' | 'missions' | 'command'>(
+    () => {
+      if (typeof window === 'undefined') return 'chat'
+      const saved = localStorage.getItem('golem.drive.mode')
+      return saved === 'missions' || saved === 'command' ? saved : 'chat'
+    },
   )
   useEffect(() => {
     try { localStorage.setItem('golem.drive.mode', workspaceMode) } catch { /* optional */ }
@@ -316,6 +323,13 @@ export default function AgentPage() {
   const [currentBranch, setCurrentBranch] = useState<string | null>(null)
   const [hasPendingDiff, setHasPendingDiff] = useState(false)
   const [thinkingCollapsed, setThinkingCollapsed] = useState(false)
+  // Voice input — Web Speech API, same small lift as Shard (mobile chat).
+  // The Voice/Type toggle lives in the composer; voice mode appends the
+  // transcript into the same input the user can still edit, then sends like
+  // any other typed request.
+  const [inputMode, setInputMode] = useState<'type' | 'voice'>('type')
+  const [voiceListening, setVoiceListening] = useState(false)
+  const voiceRecRef = useRef<{ stop: () => void } | null>(null)
 
   // File tree state
   const [filePaths, setFilePaths] = useState<string[]>([])
@@ -992,6 +1006,33 @@ USER REQUEST: ${userText}`
     }
   }
 
+  // Toggle speech recognition on/off. Appends recognized text to the input
+  // (interim results live-update, final result lands permanently), so voice
+  // and typing compose together. No-op where the Web Speech API is absent.
+  const handleVoiceToggle = useCallback(() => {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) return
+    if (voiceListening) {
+      try { voiceRecRef.current?.stop() } catch { /* ignore */ }
+      setVoiceListening(false)
+      return
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
+    const recognition = new SpeechRecognition()
+    recognition.interimResults = true
+    recognition.continuous = false
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript
+      setInput((prev) => prev + transcript)
+    }
+    recognition.onend = () => setVoiceListening(false)
+    recognition.onerror = () => setVoiceListening(false)
+    voiceRecRef.current = recognition
+    setVoiceListening(true)
+    recognition.start()
+  }, [voiceListening])
+
   const discardProposal = (idx: number) => {
     setLines((l) => l.filter((_, j) => j !== idx))
   }
@@ -1081,7 +1122,7 @@ USER REQUEST: ${userText}`
           </button>
         </div>
 
-        {/* Chat / Command workspace switcher — fully separate workspaces */}
+        {/* Chat / Missions / Terminals workspace switcher — fully separate workspaces */}
         <div className="flex items-center gap-0.5 rounded border border-border bg-surface-secondary p-0.5">
           <button onClick={() => setWorkspaceMode('chat')}
             className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
@@ -1090,12 +1131,19 @@ USER REQUEST: ${userText}`
             title="Chat workspace — conversation, model, skills (no terminals)">
             <MessageSquare className="h-3 w-3" /> Chat
           </button>
+          <button onClick={() => setWorkspaceMode('missions')}
+            className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
+              workspaceMode === 'missions' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+            }`}
+            title="Missions — read-only run history and task list">
+            <Swords className="h-3 w-3" /> Missions
+          </button>
           <button onClick={() => setWorkspaceMode('command')}
             className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
               workspaceMode === 'command' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
             }`}
             title="Command workspace — full IDE terminals (no chat)">
-            <TerminalSquare className="h-3 w-3" /> Commands
+            <TerminalSquare className="h-3 w-3" /> Terminals
           </button>
         </div>
 
@@ -1119,7 +1167,7 @@ USER REQUEST: ${userText}`
             <span className="font-mono text-[10px] uppercase tracking-wider text-warning">Pending diff</span>
           )}
           <button
-            onClick={() => terminalWorkspaceRef.current?.createTerminal()}
+            onClick={() => { setWorkspaceMode('command'); terminalWorkspaceRef.current?.createTerminal() }}
             title="Create an unlimited PTY-backed terminal"
             className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground transition-colors hover:text-primary"
           >
@@ -1276,10 +1324,10 @@ USER REQUEST: ${userText}`
           )}
         </aside>
 
-        {/* Main workspace — Chat and Command are fully separate workspaces. */}
+        {/* Main workspace — Chat, Missions, and Terminals are fully separate workspaces. */}
         <div className="flex min-h-0 min-w-0 flex-1">
           {/* Chat workspace: conversation (or Cruise). No terminals visible. */}
-          <div className={`flex min-h-0 min-w-0 flex-col flex-1 ${workspaceMode === 'command' ? 'hidden' : ''}`}>
+          <div className={`flex min-h-0 min-w-0 flex-col flex-1 ${workspaceMode !== 'chat' ? 'hidden' : ''}`}>
             {/* Cruise replaces the conversation pane when active */}
             {cruiseMode === 'cruise' && <CruisePanel repo={repo} />}
 
@@ -1772,6 +1820,38 @@ USER REQUEST: ${userText}`
               </div>
             )}
 
+              {/* Input mode toggle: Type / Voice — Voice uses the Web Speech API */}
+              <div className="mb-2 flex items-center gap-2">
+                <div className="flex items-center gap-0.5 rounded border border-border bg-surface-secondary p-0.5">
+                  <button onClick={() => setInputMode('type')} disabled={running || voiceListening}
+                    className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors disabled:opacity-40 ${
+                      inputMode === 'type' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    title="Type mode — keyboard input">
+                    <Keyboard className="h-3 w-3" /> Type
+                  </button>
+                  <button onClick={() => setInputMode('voice')} disabled={running}
+                    className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors disabled:opacity-40 ${
+                      inputMode === 'voice' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                    title="Voice mode — dictate your request (Web Speech API)">
+                    <Mic className="h-3 w-3" /> Voice
+                  </button>
+                </div>
+                {inputMode === 'voice' && (
+                  <button onClick={handleVoiceToggle} disabled={!hasRepo}
+                    className={`flex items-center gap-1.5 rounded border px-2.5 py-1.5 font-mono text-[10px] transition-colors disabled:opacity-40 ${
+                      voiceListening
+                        ? 'border-destructive/40 bg-destructive/10 text-destructive'
+                        : 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20'
+                    }`}
+                    title={voiceListening ? 'Stop listening' : 'Start listening'}>
+                    {voiceListening ? <MicOff className="h-3 w-3 animate-pulse" /> : <Mic className="h-3 w-3" />}
+                    {voiceListening ? 'Listening…' : 'Speak'}
+                  </button>
+                )}
+              </div>
+
               {/* Row 2: textarea + send button — textarea is the dominant element */}
               <div className="flex items-end gap-2">
                 <textarea ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown}
@@ -1800,8 +1880,12 @@ USER REQUEST: ${userText}`
           </div>
         </div>
         </div>
+          {/* Missions workspace: read-only run history + task list. */}
+          <div className={`min-h-0 min-w-0 flex-1 ${workspaceMode === 'missions' ? 'flex' : 'hidden'}`}>
+            <MissionsPanel repo={repo} onChat={() => { setWorkspaceMode('chat'); setCruiseMode('drive') }} />
+          </div>
           {/* Command workspace: full IDE — terminals only, no chat. */}
-          <div className={`min-h-0 min-w-0 flex-1 ${workspaceMode === 'chat' ? 'hidden' : 'flex'}`}>
+          <div className={`min-h-0 min-w-0 flex-1 ${workspaceMode === 'command' ? 'flex' : 'hidden'}`}>
             <DriveTerminalWorkspace ref={terminalWorkspaceRef} onCountChange={setTerminalCount} />
           </div>
         </div>
