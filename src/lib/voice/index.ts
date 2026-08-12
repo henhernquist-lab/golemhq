@@ -21,7 +21,11 @@ const execFileAsync = promisify(execFile)
 
 export const VOICE_VENV = process.env.GOLEM_VOICE_VENV ?? '/tmp/golem-voice-venv'
 const PYTHON = join(VOICE_VENV, 'bin', 'python')
-const SETUP_HINT = 'run `bash scripts/setup-voice.sh` on the host (the venv lives on /tmp and a Codespace restart wipes it)'
+// Names the automatic path first. After a Codespace resume the venv is
+// genuinely missing for the few minutes the rebuild takes, and a hint that
+// only says "run this by hand" invites a second concurrent install of torch.
+const SETUP_HINT =
+  'the venv lives on /tmp and a Codespace resume wipes it — .devcontainer/postStart.sh rebuilds it in the background, so this may clear on its own in a few minutes; `tail -f /tmp/golem-voice-setup.log` to watch, or `bash scripts/setup-voice.sh` to force it'
 
 /** Whisper base: 74M params, no GPU needed, good enough for dictation. */
 const WHISPER_MODEL = process.env.WHISPER_MODEL ?? 'base'

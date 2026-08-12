@@ -62,6 +62,23 @@ echo "espeak-ng: $(espeak-ng --version 2>&1 | head -1)"
 #
 # Kept in sync by hand with DEFAULT_ROTATION in src/lib/voice/voices.ts — these
 # are the voices an agent gets without anyone choosing one.
+# Kokoro's English g2p pulls a spaCy model the first time a pipeline is built,
+# and pip does not bring it — it downloads on first use. Left un-warmed, the
+# first "preview" click in the UI silently fetches 12 MB before it can speak,
+# and fails outright on a host with no egress. Building a pipeline here does
+# that download now, and doubles as a real check that synthesis works at all.
+warm_pipeline() {
+  echo "warming the synthesis pipeline (downloads the g2p model on first run)…"
+  "$PY" - <<'PYWARM' || echo "  (pipeline warm-up failed — first playback will be slower)"
+import numpy as np
+from kokoro import KPipeline
+audio = np.concatenate([a for _, _, a in KPipeline(lang_code='a')("Ready.", voice='af_heart')] or [np.zeros(1)])
+peak = float(np.abs(audio).max())
+print(f"  synthesis ok — peak amplitude {peak:.3f}")
+raise SystemExit(0 if peak > 0.01 else 1)
+PYWARM
+}
+
 warm_voices() {
   echo "warming default voice packs…"
   "$PY" - <<'PYWARM' || echo "  (could not pre-fetch voice packs — first playback will download them)"
@@ -79,6 +96,7 @@ if [ -x "$PY" ] && "$PY" -c "import whisper, kokoro, soundfile" >/dev/null 2>&1;
   echo "voice venv already complete at $VENV"
   "$PY" -c "import whisper, torch; print(f'whisper {whisper.__version__}, torch {torch.__version__}')"
   warm_voices
+  warm_pipeline
   exit 0
 fi
 
@@ -96,4 +114,5 @@ echo "installing whisper + kokoro…"
 
 "$PY" -c "import whisper, kokoro, soundfile, torch; print(f'ok — whisper {whisper.__version__}, torch {torch.__version__}')"
 warm_voices
+warm_pipeline
 echo "done. venv: $VENV"
