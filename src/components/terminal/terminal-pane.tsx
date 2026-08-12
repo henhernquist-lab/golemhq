@@ -6,6 +6,8 @@ import type { FitAddon as XTermFitAddon } from '@xterm/addon-fit'
 import { X, Sparkles, Loader2, ChevronDown, Copy, Eraser, Maximize2, Minimize2, Pencil, Rows2, Columns2, RotateCcw, Square } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 
+import { keystrokeTiming, type KeystrokeSample } from '@/lib/terminal/keystroke-timing'
+
 interface TerminalPaneProps {
   id: string
   cwd?: string
@@ -38,6 +40,17 @@ interface TerminalPaneProps {
  * unmount it disconnects SSE and disposes xterm, but does NOT kill the PTY,
  * so Strict Mode remounts and brief tab-aways resume via scrollback replay.
  */
+/**
+ * How long a keystroke may wait to be batched with the next one.
+ *
+ * Only ever paid by a character typed while a request is already in flight —
+ * an idle burst's first character is sent immediately — so this is a ceiling
+ * on added latency for fast typists, not a floor for everyone. 12ms is under
+ * one frame at 60Hz, so a batched character still paints in the same frame it
+ * would have anyway.
+ */
+const COALESCE_WINDOW_MS = 12
+
 export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose, onClosePane, onCommand, onOutput, onRename, onDuplicate, onRestart, onKill, onClear, onSplitVertical, onSplitHorizontal, onMoveToPane, onCollapse, onMaximize, isMaximized = false, status = 'idle' }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   // Why the last keystroke didn't reach the shell. Rendered inline on the
@@ -64,6 +77,15 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
   // of order during paste or fast typing; the PTY must receive bytes in order.
   const inputQueueRef = useRef(Promise.resolve())
   const inputSequenceRef = useRef(0)
+  // Keystrokes typed while a request is in flight, sent as one batch.
+  const pendingBatchRef = useRef<{
+    data: string
+    submits: boolean
+    timing: KeystrokeSample | null
+    sequence: number
+  }>({ data: '', submits: false, timing: null, sequence: 0 })
+  const coalesceTimerRef = useRef<number | null>(null)
+  const inFlightRef = useRef(0)
   useEffect(() => {
     onCommandRef.current = onCommand
     onOutputRef.current = onOutput
@@ -289,28 +311,79 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
       const onDataDisp = term.onData((data) => {
         onOutputRef.current?.()
         setExitCode(null) // new keystrokes mean a fresh command is in flight
+
         const sequence = ++inputSequenceRef.current
+        const timing = keystrokeTiming.start(sequence, data)
         console.debug('[terminal chain] xterm → input queue', { id, sequence, bytes: data.length })
+
+        // ─── Coalescing ────────────────────────────────────────────
+        // Every keystroke used to become its own POST, chained onto the
+        // previous one's promise. Ordering was correct, but the Nth character
+        // could not leave the browser until N-1 round trips had completed, so
+        // latency accumulated across a burst instead of being paid once.
+        //
+        // A burst is now one request. The first character of an idle burst
+        // still leaves immediately — delaying that would ADD latency to the
+        // case that already felt fine — and only characters typed while a
+        // request is already in flight get batched behind it.
+        const batch = pendingBatchRef.current
+        batch.data += data
         // A TUI reads TIOCGWINSZ once at exec time, so a command submitted
         // before the resize handshake lands snapshots the 80x24 the PTY was
         // born at and paints into a corner of a much wider pane. Enter is the
-        // only keystroke that can exec something, so it's the only one that
-        // waits — and only when the server hasn't confirmed the current size,
-        // which after the first successful push is never.
-        const submits = data.includes('\r') || data.includes('\n')
-        inputQueueRef.current = inputQueueRef.current
-          .then(async () => {
-            // Re-read inside the queue: an earlier Enter may already have
-            // confirmed this geometry, and the grid may have changed since.
-            const current = `${term.cols}x${term.rows}`
-            if (!submits || disposed || confirmedGeometry === current) return
-            if (await sendResize(id, term.cols, term.rows)) confirmedGeometry = current
-          })
-          .then(() => sendInput(id, data, sequence))
-          .then((reason) => {
-            if (!disposed) setInputError(reason)
-          })
-          .catch(() => {})
+        // only keystroke that can exec something, so it is the only one that
+        // waits — and only when the server has not confirmed the current size.
+        if (data.includes('\r') || data.includes('\n')) batch.submits = true
+        // The batch is timed against its OLDEST character, which is the one
+        // that has been waiting; crediting it with the newest keystroke's
+        // clock would report a latency nobody experienced.
+        if (!batch.timing) batch.timing = timing
+        if (batch.sequence === 0) batch.sequence = sequence
+
+        const flush = () => {
+          if (coalesceTimerRef.current !== null) {
+            window.clearTimeout(coalesceTimerRef.current)
+            coalesceTimerRef.current = null
+          }
+          const payload = batch.data
+          if (!payload) return
+          const submits = batch.submits
+          const batchTiming = batch.timing
+          const batchSequence = batch.sequence
+          batch.data = ''
+          batch.submits = false
+          batch.timing = null
+          batch.sequence = 0
+
+          inFlightRef.current += 1
+          inputQueueRef.current = inputQueueRef.current
+            .then(async () => {
+              // Re-read inside the queue: an earlier Enter may already have
+              // confirmed this geometry, and the grid may have changed since.
+              const current = `${term.cols}x${term.rows}`
+              if (!submits || disposed || confirmedGeometry === current) return
+              if (await sendResize(id, term.cols, term.rows)) confirmedGeometry = current
+            })
+            .then(() => sendInput(id, payload, batchSequence, batchTiming))
+            .then((reason) => {
+              if (!disposed) setInputError(reason)
+            })
+            .catch(() => {})
+            .finally(() => {
+              inFlightRef.current -= 1
+              // Anything typed while this was in flight is already waiting;
+              // send it the moment the line clears rather than making it sit
+              // out the rest of its coalescing window.
+              if (inFlightRef.current === 0 && pendingBatchRef.current.data) flush()
+            })
+        }
+
+        if (inFlightRef.current === 0) {
+          flush()
+        } else if (coalesceTimerRef.current === null) {
+          // Bounded so a long-running request cannot hold keystrokes forever.
+          coalesceTimerRef.current = window.setTimeout(flush, COALESCE_WINDOW_MS)
+        }
         for (const ch of data) {
           if (ch === '\r' || ch === '\n') {
             const cmd = lineBufferRef.current.trim()
@@ -391,8 +464,13 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
         }
         try {
           const text = JSON.parse((e as MessageEvent).data) as string
+          const echoed = keystrokeTiming.echo(text)
           console.debug('[terminal chain] transport → xterm', { id, bytes: text.length })
-          term.write(text)
+          // The callback fires once xterm has actually processed the chunk,
+          // which is t4 — writes are queued internally, so timing the call
+          // itself would measure enqueueing rather than painting.
+          if (echoed) term.write(text, () => keystrokeTiming.painted(echoed))
+          else term.write(text)
         } catch {
           /* malformed chunk */
         }
@@ -485,6 +563,13 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
       cleanup = () => {
         clearInterval(healTimer)
         onDataDisp.dispose()
+        // A coalesced batch still waiting on its timer would otherwise fire
+        // after the terminal is gone, posting keystrokes to a dead session.
+        if (coalesceTimerRef.current !== null) {
+          window.clearTimeout(coalesceTimerRef.current)
+          coalesceTimerRef.current = null
+        }
+        pendingBatchRef.current = { data: '', submits: false, timing: null, sequence: 0 }
         containerRef.current?.removeEventListener('mousedown', onClick)
         ro.disconnect()
         if (resizeTimer) clearTimeout(resizeTimer)
@@ -702,14 +787,34 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
  * type" was so hard to pin down. Returns null on success, else a message the
  * pane shows inline.
  */
-async function sendInput(id: string, data: string, sequence: number): Promise<string | null> {
+async function sendInput(
+  id: string,
+  data: string,
+  sequence: number,
+  timing?: KeystrokeSample | null,
+): Promise<string | null> {
   console.debug('[terminal chain] input queue → transport', { id, sequence, bytes: data.length })
   try {
+    if (timing) timing.dispatch = performance.now() - timing.t0
     const response = await fetch(`/api/terminal/pty/${id}/input`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ data }),
     })
+    if (timing) {
+      timing.response = performance.now() - timing.t0
+      // The server's own phase breakdown, riding back on the same request that
+      // carried this keystroke — no cross-log correlation required.
+      const header = response.headers.get('Server-Timing')
+      if (header) {
+        timing.server = Object.fromEntries(
+          header.split(',').map((part) => {
+            const [name, dur] = part.trim().split(';dur=')
+            return [name, Number(dur)]
+          }),
+        )
+      }
+    }
     const result = (await response.json().catch(() => ({}))) as { ok?: boolean; error?: string }
     console.debug('[terminal chain] transport → PTY stdin', { id, sequence, status: response.status, ok: result.ok === true })
 
