@@ -3,8 +3,6 @@
   "//": "Pins the same default GitHub Codespaces universal image this repo already runs (see /usr/local/etc/vscode-dev-containers/meta.env). Adding this file only changes the container on an explicit Rebuild — it installs tmux and wires up the persistent workspace; nothing else about the base image changes.",
   "image": "mcr.microsoft.com/devcontainers/universal:2",
   "postCreateCommand": "bash .devcontainer/postCreate.sh",
-  "//postStart": "Runs on every container start, including resume from stop. postCreate does NOT — and /tmp is a fresh disk on every resume, so the voice venv needs rebuilding at start time, not create time.",
-  "postStartCommand": "bash .devcontainer/postStart.sh",
   "customizations": {
     "vscode": {
       "extensions": []

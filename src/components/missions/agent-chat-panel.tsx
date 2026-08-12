@@ -13,14 +13,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, Send, Terminal, Wrench, X } from 'lucide-react'
 
 import type { ChatMessage, ToolCall } from '@/lib/missions/agent-chat'
-import { VoiceControls, type VoiceMode } from './voice-controls'
 
 interface ChatAgent {
   id: string
   name: string
   cliCommand: string | null
-  /** Only for the header label — the server resolves the real voice by id. */
-  voiceId?: string | null
 }
 
 function ToolCallRow({ call }: { call: ToolCall }) {
@@ -53,10 +50,6 @@ export function AgentChatPanel({ agent, onClose }: { agent: ChatAgent; onClose: 
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Per-conversation and switchable mid-chat: the toggle lives with the thread
-  // rather than in global settings, so one agent can be spoken to while
-  // another is typed at.
-  const [mode, setMode] = useState<VoiceMode>('type')
   const threadRef = useRef<HTMLDivElement>(null)
 
   // Reuse the most recent conversation with this agent, so reopening the panel
@@ -100,10 +93,10 @@ export function AgentChatPanel({ agent, onClose }: { agent: ChatAgent; onClose: 
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, sending])
 
-  async function send(override?: string) {
-    const content = (override ?? input).trim()
+  async function send() {
+    const content = input.trim()
     if (!content || !chatId || sending) return
-    if (override === undefined) setInput('')
+    setInput('')
     setError(null)
     // Show the human's own message immediately. A turn takes tens of seconds,
     // and a message that vanishes into a spinner feels like it was dropped.
@@ -135,11 +128,6 @@ export function AgentChatPanel({ agent, onClose }: { agent: ChatAgent; onClose: 
           <Terminal className="h-3.5 w-3.5 text-primary" />
           <span className="font-mono text-xs text-foreground">{agent.name}</span>
           <span className="font-mono text-[10px] text-muted-foreground">{agent.cliCommand}</span>
-          {agent.voiceId && (
-            <span className="font-mono text-[10px] text-muted-foreground" title="the voice this agent speaks in">
-              · {agent.voiceId}
-            </span>
-          )}
         </div>
         <button onClick={onClose} className="text-muted-foreground hover:text-primary">
           <X className="h-3.5 w-3.5" />
@@ -198,23 +186,6 @@ export function AgentChatPanel({ agent, onClose }: { agent: ChatAgent; onClose: 
       </div>
 
       {error && <p className="px-3 pb-1 font-mono text-[10px] text-red-400">{error}</p>}
-
-      <VoiceControls
-        mode={mode}
-        onModeChange={setMode}
-        // A transcript is sent straight through rather than dropped in the box
-        // for confirmation — the point of speaking is not having to type.
-        onTranscript={(text) => send(text)}
-        // The id, not the voice: sending a voice id from the client would let a
-        // stale panel keep speaking in a voice Henry has since changed.
-        agentId={agent.id}
-        speakingText={
-          mode === 'voice' && !sending
-            ? [...messages].reverse().find((m) => m.role === 'agent')?.content ?? null
-            : null
-        }
-        disabled={!chatId || sending}
-      />
 
       <div className="flex gap-2 border-t border-border p-2">
         <input

@@ -4,9 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, Mic, ChevronDown, MessageCircle, Clock, X } from 'lucide-react'
-
-import { useDictation } from '@/lib/voice/use-dictation'
+import { Send, ChevronDown, MessageCircle, Clock, X } from 'lucide-react'
 import { BottomSheet } from '@/components/mobile/BottomSheet'
 import { TypingText } from '@/components/typing-text'
 import type { UIMessage, TextUIPart } from 'ai'
@@ -75,16 +73,6 @@ export default function MobileChatPage() {
     LITE_MODELS[0] ??
     { id: model, label: LITE_MODEL_LABEL, description: LITE_MODEL_DESC }
 
-  // Voice input — recorded here, transcribed by Whisper on the host. The
-  // browser's built-in dictation API would be less code and would work on any
-  // phone, but it uploads the microphone to Google; this app has one voice
-  // path and it is the local one.
-  const appendTranscript = useCallback((text: string) => {
-    setInput((prev) => (prev.trim() ? `${prev.trimEnd()} ${text}` : text))
-  }, [])
-  const dictation = useDictation(appendTranscript)
-  const voiceUnavailable = dictation.status?.available === false
-
   return (
     <div className="flex h-dvh flex-col bg-background">
       {/* Header */}
@@ -130,7 +118,7 @@ export default function MobileChatPage() {
               <MessageCircle className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
               <p className="font-mono text-sm text-muted-foreground">Shard</p>
               <p className="mt-1 text-xs text-muted-foreground/60">
-                Tap the mic or type to start
+                Type a message to start
               </p>
             </motion.div>
           </div>
@@ -190,38 +178,7 @@ export default function MobileChatPage() {
         ref={inputContainerRef}
         className="flex-shrink-0 border-t border-border bg-surface-secondary px-3 py-2"
       >
-        {/* A disabled mic on a phone looks broken unless it says why. The
-            transcriber runs on the host, so "unavailable" is routine here. */}
-        {(dictation.busy || voiceUnavailable || dictation.error) && (
-          <p className={`mb-1.5 font-mono text-[10px] ${dictation.error ? 'text-destructive' : 'text-muted-foreground'}`}>
-            {dictation.error ??
-              dictation.busy ??
-              `voice unavailable — ${dictation.status?.reason ?? 'the transcriber is not reachable'}`}
-          </p>
-        )}
         <div className="flex items-end gap-2">
-          {/* Voice button */}
-          <button
-            onClick={dictation.toggle}
-            disabled={isStreaming || voiceUnavailable || !!dictation.busy}
-            className={`flex-shrink-0 rounded-full border p-2.5 transition-colors ${
-              dictation.recording
-                ? 'border-primary bg-primary/20 text-primary animate-pulse'
-                : 'border-border text-muted-foreground hover:border-primary/30 hover:text-foreground'
-            } disabled:opacity-40`}
-            style={{ minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            aria-label={
-              voiceUnavailable
-                ? `Voice input unavailable — ${dictation.status?.reason ?? 'unknown reason'}`
-                : dictation.recording
-                  ? 'Stop recording'
-                  : 'Voice input'
-            }
-            title={voiceUnavailable ? `voice unavailable — ${dictation.status?.reason ?? ''}` : undefined}
-          >
-            <Mic className="h-5 w-5" />
-          </button>
-
           {/* Text input */}
           <textarea
             ref={textareaRef}

@@ -10,7 +10,7 @@ enry lite is the stripped-down mobile companion for enry.agent, living at the `/
 
 | Feature | Route | Notes |
 |---|---|---|
-| **Chat** | `/m/chat` | SSE streaming via existing `/api/chat`. Model picker as bottom sheet. Voice input records locally and is transcribed by Whisper on the host (`/api/voice/transcribe`) — it needs that host reachable, and the mic says so when it is not. Conversation history as bottom sheet. |
+| **Chat** | `/m/chat` | SSE streaming via existing `/api/chat`. Model picker as bottom sheet. Conversation history as bottom sheet. |
 | **Inbox** | `/m/inbox` | Alert/notification feed. Expandable items with deep-links to desktop. Pull-to-refresh. |
 | **Status** | `/m/status` | Cron job health — one card per job, green/yellow/red, expand for last-run output, "Run now" per job. |
 | **Tools** | `/m/tools` | Web search (Tavily), memory search (pgvector recall), GitHub quick-check. "More tools" sheet lists desktop-only tools. |

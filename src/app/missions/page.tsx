@@ -39,8 +39,6 @@ interface AgentWithDetection extends Agent {
     detectedHost: string | null
   } | null
   instructions: string | null
-  voiceId: string | null
-  defaultVoiceId: string | null
 }
 
 interface ValidationPayload {
@@ -98,12 +96,7 @@ export default function MissionsPage() {
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   const [hiring, setHiring] = useState(false)
   const [editing, setEditing] = useState<EditableAgent | null>(null)
-  const [chatAgent, setChatAgent] = useState<{
-    id: string
-    name: string
-    cliCommand: string | null
-    voiceId: string | null
-  } | null>(null)
+  const [chatAgent, setChatAgent] = useState<{ id: string; name: string; cliCommand: string | null } | null>(null)
 
   const loadList = useCallback(async () => {
     try {
@@ -349,7 +342,6 @@ export default function MissionsPage() {
                   <th className="px-3 py-2">cli command</th>
                   <th className="px-3 py-2">state</th>
                   <th className="px-3 py-2">instructions</th>
-                  <th className="px-3 py-2">voice</th>
                   <th className="px-3 py-2">detected</th>
                   <th className="px-3 py-2" />
                 </tr>
@@ -375,19 +367,6 @@ export default function MissionsPage() {
                         </span>
                       ) : (
                         '—'
-                      )}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-[10px]">
-                      {/* A chosen voice and a rotation default are different
-                          claims. Greying the default keeps "this is what it
-                          happens to sound like" from reading as "this is what
-                          Henry picked". */}
-                      {a.voiceId ? (
-                        <span className="text-foreground">{a.voiceId}</span>
-                      ) : (
-                        <span className="text-muted-foreground" title="nobody has chosen — assigned by rotation">
-                          {a.defaultVoiceId ?? '—'} <span className="opacity-60">(default)</span>
-                        </span>
                       )}
                     </td>
                     <td className="px-3 py-2 font-mono text-[10px]">
@@ -419,12 +398,7 @@ export default function MissionsPage() {
                           onClick={() => {
                             setHiring(false)
                             setEditing(null)
-                            setChatAgent({
-                              id: a.id,
-                              name: a.name,
-                              cliCommand: a.cliCommand,
-                              voiceId: a.voiceId ?? a.defaultVoiceId,
-                            })
+                            setChatAgent({ id: a.id, name: a.name, cliCommand: a.cliCommand })
                           }}
                           className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground transition-colors hover:text-primary"
                           aria-label={`chat with ${a.name}`}
@@ -444,8 +418,6 @@ export default function MissionsPage() {
                             cliCommand: a.cliCommand,
                             enabled: a.enabled,
                             instructions: a.instructions,
-                            voiceId: a.voiceId,
-                            defaultVoiceId: a.defaultVoiceId,
                           })
                         }}
                         className="text-muted-foreground transition-colors hover:text-primary"

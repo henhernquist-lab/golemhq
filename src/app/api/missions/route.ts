@@ -12,15 +12,7 @@
  */
 
 import { auth } from '@/lib/auth'
-import {
-  listMissions,
-  listAgents,
-  getDetections,
-  listAgentInstructions,
-  listAgentVoices,
-  listAgentIdsByCreation,
-} from '@/lib/missions/store'
-import { defaultVoiceFor } from '@/lib/voice/voices'
+import { listMissions, listAgents, getDetections, listAgentInstructions } from '@/lib/missions/store'
 import { CHAT_REPO_PREFIX } from '@/lib/missions/agent-chat'
 import type { AgentDetectionRecord } from '@/lib/missions/store'
 
@@ -56,20 +48,12 @@ export async function GET(req: Request) {
     // without it.
     const instructions = await listAgentInstructions()
 
-    // Both halves of the voice answer: what was chosen, and what the rotation
-    // would give an agent nobody has chosen for. The roster shows the second
-    // greyed, so "George" never looks like a decision Henry made when it was
-    // just the rotation — and the edit form can say which it is replacing.
-    const [chosenVoices, creationOrder] = await Promise.all([listAgentVoices(), listAgentIdsByCreation()])
-
     return Response.json({
       missions,
       agents: agents.map((agent) => ({
         ...agent,
         detection: detections.get(agent.id) ?? null,
         instructions: instructions.get(agent.id) ?? null,
-        voiceId: chosenVoices.get(agent.id) ?? null,
-        defaultVoiceId: defaultVoiceFor(agent.id, creationOrder),
       })),
     })
   } catch (err) {
