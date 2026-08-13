@@ -27,15 +27,23 @@ test.describe('terminal sizing', () => {
 
   test('a mounted terminal fills its pane and is not stuck at the default grid', async ({ page }) => {
     await page.goto('/login')
+    // The email form sits behind two disclosure steps; the placeholders do
+    // not exist in the DOM until both have been clicked.
+    await page.getByRole('button', { name: 'email', exact: true }).click()
+    await page.locator('button[type="button"]', { hasText: /^sign in$/ }).first().click()
     await page.getByPlaceholder('email').fill(EMAIL!)
     await page.getByPlaceholder('password').fill(PASSWORD!)
-    await page.getByRole('button', { name: /sign in|log in|continue/i }).first().click()
+    await page.locator('button[type="submit"]').click()
     await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
 
     await page.goto('/forge')
 
-    // Open a terminal, then wait for xterm to actually render a screen.
-    await page.getByRole('button', { name: /terminal/i }).first().click()
+    // Open a terminal, then wait for xterm to actually render a screen. The
+    // Command workspace opens empty — switching to it is not enough, one has
+    // to be asked for.
+    await page.getByRole('button', { name: /^Terminals$/ }).first().click()
+    const newTerminal = page.getByRole('button', { name: /new terminal/i }).first()
+    if (await newTerminal.isVisible().catch(() => false)) await newTerminal.click()
     const screen = page.locator('.xterm-screen').first()
     await expect(screen).toBeVisible({ timeout: 30_000 })
 

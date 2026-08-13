@@ -37,7 +37,7 @@ test.describe('terminal recovery', () => {
     await signIn(page)
     await page.goto('/forge')
 
-    await page.getByRole('button', { name: /commands/i }).click()
+    await page.getByRole('button', { name: /^Terminals$/ }).first().click()
 
     // The Command workspace opens empty — there is no terminal until one is
     // asked for, so the round trip has nothing to test without this.
@@ -56,11 +56,11 @@ test.describe('terminal recovery', () => {
     // retires after 3 consecutive "healthy" reads). If zero-width-while-hidden
     // is being counted as healthy, the safety net is gone by the time we
     // return — and any fit that was needed on reveal never happens.
-    await page.getByRole('button', { name: /chat/i }).click()
+    await page.getByRole('button', { name: /^Chat$/ }).first().click()
     await expect(screen).toBeHidden()
     await page.waitForTimeout(9_000)
 
-    await page.getByRole('button', { name: /commands/i }).click()
+    await page.getByRole('button', { name: /^Terminals$/ }).first().click()
 
     // The actual user-visible claim: it comes back, and comes back usable.
     await expect(screen).toBeVisible({ timeout: 20_000 })

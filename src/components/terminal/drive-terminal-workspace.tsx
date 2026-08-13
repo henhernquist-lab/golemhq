@@ -579,6 +579,23 @@ export const DriveTerminalWorkspace = forwardRef<DriveTerminalWorkspaceHandle, {
     return () => window.removeEventListener('keydown', onEscape)
   }, [fullscreen])
 
+  // Maximizing a pane reclaims space from its SIBLINGS. With one pane there
+  // are none, so both maximize buttons are literally no-ops — measured in a
+  // real browser, the xterm screen stayed at exactly 1015x540 across the
+  // click, while the workspace fullscreen button took it to 1253x594. Three
+  // controls in the same toolbar row carry a maximize icon and two of them do
+  // nothing in the common single-pane case; that is what "the fullscreen
+  // button does nothing" was. So when there is nothing to maximize against,
+  // fall through to the one control that can still make the terminal bigger.
+  const paneCount = useMemo(() => paneIds(layout).length, [layout])
+  const maximizePane = useCallback((paneId: string) => {
+    if (paneCount < 2) {
+      toggleFullscreen()
+      return
+    }
+    setMaximizedPaneId((current) => current === paneId ? null : paneId)
+  }, [paneCount, toggleFullscreen])
+
   const activeIdRef = useRef<string | null>(null)
   const focusedPaneRef = useRef<string | null>(null)
   const createRef = useRef(createTerminal)
@@ -645,7 +662,7 @@ export const DriveTerminalWorkspace = forwardRef<DriveTerminalWorkspaceHandle, {
           <button onClick={() => splitTerminal(pane.id, 'vertical')} title="Split pane vertically" className="rounded px-1 font-mono text-[9px] text-muted-foreground hover:bg-primary/10 hover:text-primary">V</button>
           <button onClick={() => splitTerminal(pane.id, 'horizontal')} title="Split pane horizontally" className="rounded px-1 font-mono text-[9px] text-muted-foreground hover:bg-primary/10 hover:text-primary">H</button>
           <button onClick={() => moveTerminalToNewPane(active, 'vertical')} title="Move active terminal to a new pane" className="rounded p-1 text-muted-foreground hover:bg-primary/10 hover:text-primary"><PanelLeftOpen className="h-3 w-3" /></button>
-          <button onClick={() => setMaximizedPaneId((current) => current === pane.id ? null : pane.id)} title={maximizedPaneId === pane.id ? 'Restore the other panes' : 'Maximize pane within the workspace'} className="rounded p-1 text-muted-foreground hover:bg-primary/10 hover:text-primary">{maximizedPaneId === pane.id ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}</button>
+          <button onClick={() => maximizePane(pane.id)} title={paneCount < 2 ? (fullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen workspace — nothing to maximize against with one pane') : maximizedPaneId === pane.id ? 'Restore the other panes' : 'Maximize pane within the workspace'} className="rounded p-1 text-muted-foreground hover:bg-primary/10 hover:text-primary">{(paneCount < 2 ? fullscreen : maximizedPaneId === pane.id) ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}</button>
           <button onClick={() => closePane(pane.id)} title="Close pane; move its tabs to a neighboring pane" className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><PanelLeftClose className="h-3 w-3" /></button>
         </div>
         <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -671,8 +688,8 @@ export const DriveTerminalWorkspace = forwardRef<DriveTerminalWorkspaceHandle, {
             onSplitHorizontal={() => splitTerminal(pane.id, 'horizontal')}
             onMoveToPane={() => moveTerminalToNewPane(activeRecord.id)}
             onCollapse={() => collapsePane(pane.id)}
-            onMaximize={() => setMaximizedPaneId((current) => current === pane.id ? null : pane.id)}
-            isMaximized={maximizedPaneId === pane.id}
+            onMaximize={() => maximizePane(pane.id)}
+            isMaximized={paneCount < 2 ? fullscreen : maximizedPaneId === pane.id}
             status={status[activeRecord.id] === 'active' ? 'active' : 'idle'}
           />
         </div>

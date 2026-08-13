@@ -575,16 +575,35 @@ export function isScrollbackTruncated(id: string): boolean {
  * Provoke a repaint from whatever is running, by making the terminal size
  * actually change. See pty-manager.forceRepaint for why re-asserting the same
  * geometry is not enough — resizeSession early-returns on an unchanged size, so
- * a reattached TUI would otherwise never be told to redraw.
+ * a reattached TUI would otherwise never be told to redraw — and for the
+ * measurement behind the hold time, which the 50ms this used to use sat below.
  */
-export async function forceRepaint(id: string): Promise<boolean> {
+const REPAINT_NUDGE_HOLD_MS = 250
+const REPAINT_OBSERVE_MS = 1500
+
+export async function forceRepaint(id: string): Promise<{ ok: boolean; repainted: boolean }> {
   const session = sessions.get(id)
-  if (!session || session.exited || session.cols <= 1) return false
+  if (!session || session.exited || session.cols <= 1) return { ok: false, repainted: false }
   const { cols, rows } = session
-  const nudged = await resizeSession(id, cols - 1, rows)
-  if (!nudged) return false
-  setTimeout(() => void resizeSession(id, cols, rows), 50)
-  return true
+  if (!(await resizeSession(id, cols - 1, rows))) return { ok: false, repainted: false }
+
+  let repainted = false
+  const watch = () => {
+    repainted = true
+  }
+  session.dataListeners.add(watch)
+  try {
+    await delay(REPAINT_NUDGE_HOLD_MS)
+    await resizeSession(id, cols, rows)
+    await delay(REPAINT_OBSERVE_MS)
+  } finally {
+    session.dataListeners.delete(watch)
+  }
+  return { ok: true, repainted }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 export function getScrollback(id: string): string {

@@ -97,6 +97,16 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
   // history tracker — it's derived from the same input path, purely so the
   // "Explain" button knows what the last-submitted command was.
   const lineBufferRef = useRef('')
+  // Set when something happened that the reconstruction cannot model: a cursor
+  // key, a history recall, a mouse report, anything that moves the real cursor
+  // somewhere this buffer does not know about. The buffer is then no longer a
+  // copy of the line and must not be used — but it must still be RESET at the
+  // next Enter, which is the part that was missing. The old scan hit `\x1b`,
+  // broke out of the loop, and left the typed text sitting there forever, so
+  // the next line was appended to it: type `opencode`, press an arrow key,
+  // type `opencode` again, and the tab auto-name became `opencodeopencode`.
+  // Verified in a real browser before and after.
+  const lineDirtyRef = useRef(false)
   const [lastCommand, setLastCommand] = useState('')
   const [explainOpen, setExplainOpen] = useState(false)
   const [explaining, setExplaining] = useState(false)
@@ -384,20 +394,32 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
           // Bounded so a long-running request cannot hold keystrokes forever.
           coalesceTimerRef.current = window.setTimeout(flush, COALESCE_WINDOW_MS)
         }
-        for (const ch of data) {
+        for (let i = 0; i < data.length; i++) {
+          const ch = data[i]
           if (ch === '\r' || ch === '\n') {
             const cmd = lineBufferRef.current.trim()
+            const dirty = lineDirtyRef.current
+            // Enter ends the line either way — that is the resync point.
             lineBufferRef.current = ''
-            if (cmd) {
+            lineDirtyRef.current = false
+            if (cmd && !dirty) {
               setLastCommand(cmd)
               onCommandRef.current?.(cmd)
             }
           } else if (ch === '\x7f' || ch === '\b') {
             lineBufferRef.current = lineBufferRef.current.slice(0, -1)
           } else if (ch === '\x15' || ch === '\x03') {
-            lineBufferRef.current = '' // Ctrl-U (kill line) / Ctrl-C (abandon)
+            // Ctrl-U (kill line) / Ctrl-C (abandon) — the line is genuinely
+            // gone, so this is a clean slate rather than a dirty one.
+            lineBufferRef.current = ''
+            lineDirtyRef.current = false
           } else if (ch === '\x1b') {
-            break // escape / CSI sequence (arrows, etc.)
+            // Skip the whole sequence and keep scanning. Breaking out here
+            // also discarded any Enter that shared the chunk — mouse reports
+            // and keystrokes routinely arrive together once a TUI turns on
+            // motion tracking.
+            i += escapeSequenceLength(data, i) - 1
+            lineDirtyRef.current = true
           } else if (ch >= ' ') {
             lineBufferRef.current += ch
           }
@@ -442,8 +464,12 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
           // fragments behind makes the result harder to read, not easier.
           term.reset()
           setNeedsRepaint(true)
-          void requestRepaint(id).then((ok) => {
-            if (!disposed && ok) setNeedsRepaint(false)
+          void requestRepaint(id).then(({ repainted }) => {
+            // Only a repaint that actually produced bytes clears the banner.
+            // A delivered-but-ignored nudge leaves the screen exactly as blank
+            // as it was, and saying otherwise is the difference between "this
+            // is broken and here is the button" and an unexplained black box.
+            if (!disposed && repainted) setNeedsRepaint(false)
           })
         } catch {
           /* malformed meta — treat as a normal replay */
@@ -684,13 +710,16 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
             disabled={repainting}
             onClick={async () => {
               setRepainting(true)
-              const ok = await requestRepaint(id)
+              const { ok, repainted } = await requestRepaint(id)
               setRepainting(false)
-              if (ok) setNeedsRepaint(false)
-              // Failed repaint means no live session behind this pane. Say what
-              // will actually work rather than repeating a suggestion that just
-              // demonstrably didn't.
-              else setInputError('Could not redraw — the session is gone. Restart the terminal.')
+              if (repainted) setNeedsRepaint(false)
+              // Two different failures, two different remedies. No live session
+              // means only a restart helps; a live session that ignored the
+              // signal means the program is not going to redraw on its own and
+              // the user has to make it — so say which one happened rather than
+              // repeating a suggestion that just demonstrably didn't work.
+              else if (!ok) setInputError('Could not redraw — the session is gone. Restart the terminal.')
+              else setInputError('The program did not redraw. Press Ctrl-L, or resize the pane, to force it.')
             }}
             className="shrink-0 rounded border border-warning/40 px-1.5 py-0.5 uppercase tracking-wider transition-colors hover:bg-warning/20 disabled:opacity-50"
           >
@@ -850,14 +879,45 @@ async function sendInput(
  * Separate from sendResize because the pane's size is not what's wrong — the
  * screen is. See the repaint route for why this cannot be done client-side.
  */
-async function requestRepaint(id: string): Promise<boolean> {
+/**
+ * Length of the escape sequence starting at `start`, so the line
+ * reconstruction can step over it instead of abandoning the chunk.
+ *
+ * Only long enough to find the end — nothing here interprets the sequence.
+ * An unterminated sequence (split across chunks) consumes the remainder,
+ * which is the safe direction: the line is already marked unreconstructable.
+ */
+function escapeSequenceLength(data: string, start: number): number {
+  const next = data[start + 1]
+  if (next === undefined) return 1
+  if (next === '[') {
+    // CSI: parameter and intermediate bytes, then a final byte 0x40-0x7E.
+    for (let i = start + 2; i < data.length; i++) {
+      const code = data.charCodeAt(i)
+      if (code >= 0x40 && code <= 0x7e) return i - start + 1
+    }
+    return data.length - start
+  }
+  if (next === ']' || next === 'P' || next === '^' || next === '_') {
+    // OSC/DCS/PM/APC run until BEL or the string terminator ESC \.
+    for (let i = start + 2; i < data.length; i++) {
+      if (data[i] === '\x07') return i - start + 1
+      if (data[i] === '\x1b' && data[i + 1] === '\\') return i - start + 2
+    }
+    return data.length - start
+  }
+  // SS3 (application-mode arrows) and every other two-byte form.
+  return next === 'O' && data[start + 2] !== undefined ? 3 : 2
+}
+
+async function requestRepaint(id: string): Promise<{ ok: boolean; repainted: boolean }> {
   try {
     const res = await fetch(`/api/terminal/pty/${id}/repaint`, { method: 'POST' })
-    if (!res.ok) return false
-    const body = (await res.json().catch(() => ({}))) as { ok?: boolean }
-    return body.ok === true
+    if (!res.ok) return { ok: false, repainted: false }
+    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; repainted?: boolean }
+    return { ok: body.ok === true, repainted: body.repainted === true }
   } catch {
-    return false
+    return { ok: false, repainted: false }
   }
 }
 

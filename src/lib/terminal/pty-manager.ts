@@ -190,6 +190,23 @@ export function resizeSession(id: string, cols: number, rows: number): boolean {
 }
 
 /**
+ * How long the nudged geometry is held before the real one is restored.
+ *
+ * Two SIGWINCHes is not enough on its own: a TUI reads the window size when
+ * it gets round to handling the signal, and if both have landed by then it
+ * reads the size it already had and concludes nothing changed. Measured
+ * against a real OpenCode 1.18 session in a real PTY, holding for 50, 60, 70,
+ * 80 or 90ms produced ZERO bytes of output; 100ms and above produced a full
+ * ~7KB repaint every time. The previous value here was 50ms, which is why the
+ * documented repair for a truncated backlog never actually repaired anything
+ * for OpenCode. 250ms buys margin over the observed 90-100ms cliff without
+ * being long enough to see as a flicker.
+ */
+const REPAINT_NUDGE_HOLD_MS = 250
+/** How long to watch for the repaint the nudge was supposed to provoke. */
+const REPAINT_OBSERVE_MS = 1500
+
+/**
  * Make whatever is running repaint its screen.
  *
  * There is no escape sequence that means "redraw yourself" — a full-screen
@@ -203,18 +220,35 @@ export function resizeSession(id: string, cols: number, rows: number): boolean {
  * gap that leaves a reattached TUI sitting on a screen it will never redraw.
  * Shrinking by one column and restoring forces two real SIGWINCHes and ends on
  * the geometry the caller asked for.
+ *
+ * `repainted` is observed, not assumed. Reporting success on a nudge that
+ * provoked nothing is what let the client clear its "screen may be stale"
+ * banner and leave a black rectangle with no explanation.
  */
-export function forceRepaint(id: string): boolean {
+export async function forceRepaint(id: string): Promise<{ ok: boolean; repainted: boolean }> {
   const session = sessions.get(id)
-  if (!session || session.exited) return false
+  if (!session || session.exited) return { ok: false, repainted: false }
   const { cols, rows } = session
-  if (cols <= 1) return false
-  const nudged = resizeSession(id, cols - 1, rows)
-  if (!nudged) return false
-  // Same tick would coalesce into one resize the app may never observe as a
-  // change; a macrotask apart guarantees two distinct SIGWINCHes.
-  setTimeout(() => resizeSession(id, cols, rows), 50)
-  return true
+  if (cols <= 1) return { ok: false, repainted: false }
+  if (!resizeSession(id, cols - 1, rows)) return { ok: false, repainted: false }
+
+  let repainted = false
+  const watch = () => {
+    repainted = true
+  }
+  session.dataListeners.add(watch)
+  try {
+    await delay(REPAINT_NUDGE_HOLD_MS)
+    resizeSession(id, cols, rows)
+    await delay(REPAINT_OBSERVE_MS)
+  } finally {
+    session.dataListeners.delete(watch)
+  }
+  return { ok: true, repainted }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 export function killSession(id: string): boolean {

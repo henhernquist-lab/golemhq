@@ -39,9 +39,14 @@ export async function POST(_req: Request, ctx: RouteCtx) {
 
   if (onCloud) await ensureWsLive(id)
 
-  const ok = onCloud ? await forceSpriteRepaint(id) : forceLocalRepaint(id)
+  const { ok, repainted } = onCloud ? await forceSpriteRepaint(id) : await forceLocalRepaint(id)
   // ok:false means there was no live session to signal — the same condition the
   // input route reports, and the caller should treat it the same way: the
   // session is gone and only a restart will bring the terminal back.
-  return Response.json({ ok })
+  //
+  // repainted is separate and is the one the UI should believe: the signal was
+  // delivered but the program chose not to redraw, so the screen is still
+  // whatever it was. Collapsing the two is how this route used to answer
+  // "yes, fixed" to a nudge that produced no bytes at all.
+  return Response.json({ ok, repainted })
 }
