@@ -72,19 +72,16 @@ test.describe('terminal name persistence', () => {
 
     await page.locator('textarea.xterm-helper-textarea').first().focus()
 
-    // Seed shell history WITHOUT letting the tab rename itself: the line is
-    // typed, then abandoned with Ctrl-C after being pushed into history via a
-    // comment, so the poisoned name is still in place for the real test.
-    await page.keyboard.type('opencode # seed')
+    // Launch with a mid-line edit, so the keystroke reconstruction refuses to
+    // name it and only an OSC title can. This is the case that used to leave
+    // the poisoned name on screen forever.
+    await page.keyboard.type('opencodX')
+    await page.keyboard.press('Backspace')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowRight')
+    await page.keyboard.type('e')
     await page.keyboard.press('Enter')
-    await page.waitForTimeout(2500)
-    console.log('TABS_AFTER_SEED=' + JSON.stringify(await tabNames()))
-
-    // Relaunch the way a person actually does it: up-arrow, Enter.
-    await page.keyboard.press('ArrowUp')
-    await page.waitForTimeout(400)
-    await page.keyboard.press('Enter')
-    await page.waitForTimeout(12_000)
+    await page.waitForTimeout(16_000)
     console.log('TABS_AFTER_HISTORY_RELAUNCH=' + JSON.stringify(await tabNames()))
     await page.keyboard.press('Control+C')
     await page.waitForTimeout(600)

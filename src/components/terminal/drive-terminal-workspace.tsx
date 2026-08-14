@@ -678,6 +678,12 @@ export const DriveTerminalWorkspace = forwardRef<DriveTerminalWorkspaceHandle, {
               if (executable) setRecords((current) => current.map((item) => item.id === activeRecord.id && item.autoName ? { ...item, name: executable } : item))
               markActive(pane.id, activeRecord.id)
             }}
+            onTitle={(title) => {
+              // A title beats the keystroke guess: it comes from the program
+              // itself, so it is right however the program was started. Manual
+              // renames still win — autoName is false once Henry has named it.
+              setRecords((current) => current.map((item) => item.id === activeRecord.id && item.autoName ? { ...item, name: title } : item))
+            }}
             onOutput={() => markActive(pane.id, activeRecord.id)}
             onRename={() => renameTerminal(activeRecord.id)}
             onDuplicate={() => duplicateTerminal(activeRecord.id)}

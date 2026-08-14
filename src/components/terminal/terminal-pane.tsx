@@ -16,6 +16,8 @@ interface TerminalPaneProps {
   onClose: () => void
   onClosePane?: () => void
   onCommand?: (command: string) => void
+  /** OSC 0/2 window title set by whatever is running. See term.onTitleChange. */
+  onTitle?: (title: string) => void
   onOutput?: () => void
   onRename?: () => void
   onDuplicate?: () => void
@@ -51,7 +53,7 @@ interface TerminalPaneProps {
  */
 const COALESCE_WINDOW_MS = 12
 
-export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose, onClosePane, onCommand, onOutput, onRename, onDuplicate, onRestart, onKill, onClear, onSplitVertical, onSplitHorizontal, onMoveToPane, onCollapse, onMaximize, isMaximized = false, status = 'idle' }: TerminalPaneProps) {
+export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose, onClosePane, onCommand, onTitle, onOutput, onRename, onDuplicate, onRestart, onKill, onClear, onSplitVertical, onSplitHorizontal, onMoveToPane, onCollapse, onMaximize, isMaximized = false, status = 'idle' }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   // Why the last keystroke didn't reach the shell. Rendered inline on the
   // pane: a dropped keystroke is invisible otherwise, because xterm echoes
@@ -72,6 +74,7 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
   const fitRef = useRef<XTermFitAddon | null>(null)
   const closedRef = useRef(false)
   const onCommandRef = useRef(onCommand)
+  const onTitleRef = useRef(onTitle)
   const onOutputRef = useRef(onOutput)
   // Serialize stdin writes. A separate fetch per keystroke can resolve out
   // of order during paste or fast typing; the PTY must receive bytes in order.
@@ -88,8 +91,9 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
   const inFlightRef = useRef(0)
   useEffect(() => {
     onCommandRef.current = onCommand
+    onTitleRef.current = onTitle
     onOutputRef.current = onOutput
-  }, [onCommand, onOutput])
+  }, [onCommand, onOutput, onTitle])
 
   // ─── "Explain last command" ────────────────────────────────────────
   // lineBufferRef reconstructs the command line from the keystroke stream
@@ -311,6 +315,22 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
         if (disposed) return
         fitAttempt = 0
         scheduleFit()
+      })
+
+      // The authoritative source for what a pane is running. A program that
+      // takes over the screen announces itself with OSC 0/2 — OpenCode sends
+      // `\x1b]0;OpenCode\x07` a second after it starts, captured on the wire —
+      // and every terminal emulator names its tabs from this rather than
+      // guessing at the keystroke stream. The reconstruction below stays, but
+      // only as the fallback for programs that set no title: it cannot see a
+      // command recalled with the up arrow, pasted, or edited mid-line, and a
+      // name it got wrong used to persist indefinitely.
+      const onTitleDisp = term.onTitleChange((title) => {
+        // Titles arrive from the program verbatim. Strip control bytes, and cap
+        // the length so a shell that puts a whole cwd in its title cannot
+        // stretch the tab strip.
+        const clean = title.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 32)
+        if (clean) onTitleRef.current?.(clean)
       })
 
       // Keystrokes → PTY. Also reconstruct the current command line from the
@@ -589,6 +609,7 @@ export function TerminalPane({ id, cwd, name = 'bash', clearSignal = 0, onClose,
       cleanup = () => {
         clearInterval(healTimer)
         onDataDisp.dispose()
+        onTitleDisp.dispose()
         // A coalesced batch still waiting on its timer would otherwise fire
         // after the terminal is gone, posting keystrokes to a dead session.
         if (coalesceTimerRef.current !== null) {
