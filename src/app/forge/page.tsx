@@ -8,9 +8,8 @@ import Link from 'next/link'
 import {
   ArrowLeft, ChevronDown, ChevronRight, Check, X, Send, Loader2,
   GitBranch, Folder, File, Lock, Sliders, Zap, TerminalSquare, Eye, Play,
-  Car, Radar, Swords, FileText, Pencil, Brain, Globe, Plus, MessageSquare,
+  Swords, FileText, Pencil, Brain, Globe, Plus, MessageSquare,
 } from 'lucide-react'
-import { CruisePanel } from '@/components/agent/cruise-panel'
 import { MissionsPanel } from '@/components/agent/missions-panel'
 import { DriveTerminalWorkspace, type DriveTerminalWorkspaceHandle } from '@/components/terminal/drive-terminal-workspace'
 import { SkillFeedbackBar } from '@/components/skill-feedback-bar'
@@ -297,9 +296,6 @@ export default function AgentPage() {
   // the transient UI; the transcript system-line remains the permanent record.
   const [lastRoutingDecision, setLastRoutingDecision] = useState<RoutingDecision | null>(null)
   const [routerExpanded, setRouterExpanded] = useState(false)
-  // Top-level mode: Drive (interactive, the existing behavior) vs Cruise
-  // (autonomous scan). Distinct from `mode` above, which is Drive's auto/manual.
-  const [cruiseMode, setCruiseMode] = useState<'drive' | 'cruise'>('drive')
   // Workspace mode: 'chat' (conversation only) vs 'missions' (read-only
   // mission/task list) vs 'command' (IDE terminals only). All three stay
   // mounted so each view preserves its state across switches.
@@ -624,8 +620,7 @@ export default function AgentPage() {
           focus_mode: focusMode,
           reasoning_depth: opts?.reasoningDepthOverride ?? reasoningDepth,
           proceed: opts?.proceed ?? false,
-          // Cruise auto-enables Monid for every run (no user present to toggle).
-          monid_enabled: cruiseMode === 'cruise',
+          monid_enabled: false,
           ...(opts?.skillSlugs && opts.skillSlugs.length > 0 ? { skill_slugs: opts.skillSlugs } : {}),
           ...(opts?.skillSlug && !opts?.skillSlugs ? { skill_slug: opts.skillSlug } : {}),
         }
@@ -944,13 +939,6 @@ USER REQUEST: ${userText}`
       instruction = userText + CLARIFY_RULE
     }
 
-    // Cruise mode: Monid is auto-enabled for every run. Append availability
-    // note so the coding agent knows it can call monid_api for external API
-    // discovery when the built-in tools (Tavily, GitHub, etc.) aren't enough.
-    const cruiseMonidNote = cruiseMode === 'cruise'
-      ? '\n\nAVAILABLE TOOL: monid_api — discover and call third-party APIs at runtime. When a request needs data or a service not covered by the built-in tools (Tavily web search, GitHub file ops, Composio connectors), call monid_api with a natural-language description. Monid finds and executes the right endpoint automatically.'
-      : ''
-
     setLines((l) => [
       ...l,
       { kind: 'prompt', text },
@@ -958,13 +946,10 @@ USER REQUEST: ${userText}`
       // Show thinking indicator while the skill generates — cleared when first
       // response content arrives in exec().
       ...(skillsToUse.length > 0 || skillToUse ? [{ kind: 'thinking' as const }] : []),
-      ...(cruiseMode === 'cruise' && (skillsToUse.length > 0 || skillToUse)
-        ? [{ kind: 'system' as const, text: 'Cruise auto-enabled Monid API discovery for this run.' }]
-        : []),
     ])
     setInput('')
     beginSteps({ key: 'analyze', label: 'Analyzing request', icon: 'analyze', state: 'active' })
-    exec(instruction + cruiseMonidNote, {
+    exec(instruction, {
       skillSlugs: slugsForServer ?? (skillToUse ? [skillToUse.slug] : undefined),
       modelOverride, effortOverride, reasoningDepthOverride,
     })
@@ -1069,24 +1054,6 @@ USER REQUEST: ${userText}`
 
         <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50">Coding Agent</span>
 
-        {/* Drive / Cruise mode toggle */}
-        <div className="flex items-center gap-0.5 rounded border border-border bg-surface-secondary p-0.5">
-          <button onClick={() => setCruiseMode('drive')}
-            className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
-              cruiseMode === 'drive' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
-            }`}
-            title="Drive: interactive — you drive, the agent proposes diffs">
-            <Car className="h-3 w-3" /> Drive
-          </button>
-          <button onClick={() => setCruiseMode('cruise')}
-            className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
-              cruiseMode === 'cruise' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
-            }`}
-            title="Cruise: autonomous — scans the repo and reports findings">
-            <Radar className="h-3 w-3" /> Cruise
-          </button>
-        </div>
-
         {/* Chat / Missions / Terminals workspace switcher — fully separate workspaces */}
         <div className="flex items-center gap-0.5 rounded border border-border bg-surface-secondary p-0.5">
           <button onClick={() => setWorkspaceMode('chat')}
@@ -1114,9 +1081,9 @@ USER REQUEST: ${userText}`
 
         <div className="ml-auto flex items-center gap-3">
           {/* See Golem — opens The Atelier with this surface's live context:
-              which mode is active (drive/cruise) and whether a run is going */}
+              whether a run is going */}
           <Link
-            href={`/room?from=${cruiseMode}&state=${running ? 'working' : 'idle'}`}
+            href={`/room?from=drive&state=${running ? 'working' : 'idle'}`}
             title="Watch Golem work in The Atelier"
             className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground transition-colors hover:text-primary"
           >
@@ -1291,13 +1258,9 @@ USER REQUEST: ${userText}`
 
         {/* Main workspace — Chat, Missions, and Terminals are fully separate workspaces. */}
         <div className="flex min-h-0 min-w-0 flex-1">
-          {/* Chat workspace: conversation (or Cruise). No terminals visible. */}
+          {/* Chat workspace: conversation. No terminals visible. */}
           <div className={`flex min-h-0 min-w-0 flex-col flex-1 ${workspaceMode !== 'chat' ? 'hidden' : ''}`}>
-            {/* Cruise replaces the conversation pane when active */}
-            {cruiseMode === 'cruise' && <CruisePanel repo={repo} />}
-
-            {/* Conversation (Drive) — kept mounted but hidden in Cruise so its state survives a toggle */}
-            <div className={`min-w-0 flex-col flex-1 ${cruiseMode === 'cruise' ? 'hidden' : 'flex'}`}>
+            <div className="flex min-w-0 flex-1 flex-col">
           <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-hidden">
             <div className="mx-auto max-w-[720px] px-8 py-6">
               {driveCompaction.isCompacted && (
@@ -1815,7 +1778,7 @@ USER REQUEST: ${userText}`
         </div>
           {/* Missions workspace: read-only run history + task list. */}
           <div className={`min-h-0 min-w-0 flex-1 ${workspaceMode === 'missions' ? 'flex' : 'hidden'}`}>
-            <MissionsPanel repo={repo} onChat={() => { setWorkspaceMode('chat'); setCruiseMode('drive') }} />
+            <MissionsPanel repo={repo} onChat={() => setWorkspaceMode('chat')} />
           </div>
           {/* Command workspace: full IDE — terminals only, no chat. */}
           <div className={`min-h-0 min-w-0 flex-1 ${workspaceMode === 'command' ? 'flex' : 'hidden'}`}>

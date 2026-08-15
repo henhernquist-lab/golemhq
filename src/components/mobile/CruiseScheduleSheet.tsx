@@ -6,12 +6,11 @@ import { BottomSheet } from './BottomSheet'
 import { SCANFIX_CATEGORIES, SCANFIX_LABEL, type CruiseAutoRunFrequency, type CruiseScanfixCategory } from '@/lib/cruise/types'
 import type { CruiseAutoJob } from '@/app/api/cruise/autos/route'
 
-// Mirrors desktop's AutoRunPanel (src/components/agent/cruise-panel.tsx) field
-// for field and wire format — same POST /api/cruise/repos/autorun body shape,
-// same fields, same validation. Only the widget choice differs where a mobile
-// touch target beats a desktop <select>: frequency is a radio row instead of
-// a dropdown, weekday is a chip row instead of a dropdown. tz is auto-derived
-// from the device, same as desktop (not user-editable there either).
+// Same POST /api/cruise/repos/autorun body shape, fields, and validation as
+// the (now removed) desktop auto-run config UI. Only the widget choice
+// differs where a mobile touch target beats a desktop <select>: frequency is
+// a radio row instead of a dropdown, weekday is a chip row instead of a
+// dropdown. tz is auto-derived from the device.
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 

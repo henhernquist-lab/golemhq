@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Target, Loader2, Radar, CheckCircle2, XCircle, AlertTriangle,
 } from 'lucide-react'
-import { GoalRunCard, ScanRow } from '@/components/agent/cruise-panel'
+import { GoalRunCard, ScanRow } from '@/components/agent/scan-history'
 import type {
   CruiseGoalRun, CruiseGoalStep, CruiseScan,
 } from '@/lib/cruise/types'
@@ -15,12 +15,14 @@ function isActiveScan(s: CruiseScan['status']): boolean {
 }
 
 // The Forge Missions view — the read-only mission/task list that used to live
-// on its own dashboard surface. It is intentionally a thin shell around the
-// EXACT same components CruisePanel renders (GoalRunCard / ScanRow, exported
-// from cruise-panel.tsx): mission status, live step checklists, PR links.
-// `onChat` wires each mission's "Chat" button into the shared Forge chat
-// panel — one implementation, reachable from both the roster entry and the
-// unified view. Read-only by design: starting/stopping runs stays in Cruise.
+// on its own dashboard surface. It is intentionally a thin shell around
+// GoalRunCard / ScanRow (src/components/agent/scan-history.tsx, extracted
+// from the removed Cruise tab so this view keeps working standalone): mission
+// status, live step checklists, PR links. `onChat` wires each mission's
+// "Chat" button into the shared Forge chat panel — one implementation,
+// reachable from both the roster entry and the unified view. Read-only by
+// design — the scan/goal-run backend behind it is still driven by the mobile
+// Cruise auto-run surface and its schedule cron.
 export function MissionsPanel({ repo, onChat }: {
   repo: string
   onChat?: (run: CruiseGoalRun) => void
