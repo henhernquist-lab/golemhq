@@ -188,6 +188,23 @@ export async function recordEvent(
   }
 }
 
+/**
+ * Recent events across every mission, newest first — the raw material for a
+ * live activity feed. Unlike listEvents this is not scoped to one mission, so
+ * callers that want to exclude chat/audit "missions" (see CHAT_REPO_PREFIX,
+ * AUDIT_REPO) must join against listMissions themselves; this stays a plain
+ * event query rather than knowing about those conventions.
+ */
+export async function listRecentEvents(limit = 100): Promise<MissionEvent[]> {
+  const { data, error } = await supabase
+    .from('mission_events')
+    .select('id, mission_id, task_id, ts, type, payload')
+    .order('ts', { ascending: false })
+    .limit(limit)
+  if (error) fail('listRecentEvents', error)
+  return ((data ?? []) as EventRow[]).map(toEvent)
+}
+
 export async function listEvents(missionId: string, limit = 500): Promise<MissionEvent[]> {
   const { data, error } = await supabase
     .from('mission_events')

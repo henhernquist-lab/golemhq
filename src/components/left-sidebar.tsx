@@ -21,6 +21,7 @@ import {
   GitBranch,
   ListTree,
   ChevronDown,
+  Network,
   type LucideIcon,
 } from 'lucide-react'
 import { GolemLogo } from './golem-logo'
@@ -50,6 +51,7 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: '/', icon: Home, label: 'Home', desc: 'Dashboard overview' },
       { href: '/chat', icon: MessageSquare, label: 'Chat', desc: 'Ask Golem anything' },
+      { href: '/agency', icon: Network, label: 'Agency', desc: 'Org chart, pause/resume, live activity' },
       { href: '/usage', icon: BarChart3, label: 'Usage', desc: 'Track tokens, cost, and alerts' },
     ],
   },
