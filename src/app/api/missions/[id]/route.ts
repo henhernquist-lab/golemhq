@@ -8,7 +8,7 @@
  */
 
 import { auth } from '@/lib/auth'
-import { getMission, listTasks, listEvents } from '@/lib/missions/store'
+import { getMission, listTasks, listEvents, listLeasesForTasks } from '@/lib/missions/store'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -29,6 +29,30 @@ export async function GET(_req: Request, ctx: RouteCtx) {
 
     const [tasks, events] = await Promise.all([listTasks(id), listEvents(id, 200)])
 
+    // Batch 6: what each task is holding right now, and — for the ones that
+    // are not running — whether they are waiting on a dependency or on another
+    // task's files. Those look identical in the status column (both sit at
+    // 'pending') and have completely different remedies, which is the whole
+    // reason this is surfaced.
+    const leases = await listLeasesForTasks(tasks.map((t) => t.id))
+    const leasesByTask = leases.reduce<Record<string, typeof leases>>((acc, l) => {
+      ;(acc[l.taskId] ??= []).push(l)
+      return acc
+    }, {})
+
+    // Last coordinator verdict per task. A later acquisition supersedes an
+    // earlier conflict, so oldest-first iteration means last write wins.
+    const conflicts: Record<string, { blockedBy: string[]; detail: string }> = {}
+    for (const e of events) {
+      if (!e.taskId) continue
+      if (e.type === 'coordinator.task_queued') {
+        const p = e.payload as { blockedBy?: string[]; detail?: string }
+        conflicts[e.taskId] = { blockedBy: p.blockedBy ?? [], detail: p.detail ?? 'path conflict' }
+      } else if (e.type === 'coordinator.leases_acquired') {
+        delete conflicts[e.taskId]
+      }
+    }
+
     // The validator verdicts are the thing worth surfacing per task: a task
     // reading "failed" with no visible reason is exactly the dead end this
     // whole pipeline keeps producing.
@@ -41,7 +65,7 @@ export async function GET(_req: Request, ctx: RouteCtx) {
         return acc
       }, {})
 
-    return Response.json({ mission, tasks, validations })
+    return Response.json({ mission, tasks, validations, leases: leasesByTask, conflicts })
   } catch (err) {
     return Response.json(
       { error: err instanceof Error ? err.message : 'failed to load mission' },

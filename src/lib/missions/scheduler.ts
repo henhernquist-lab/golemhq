@@ -6,12 +6,20 @@
 // validators before anything downstream is allowed to start. It does not run
 // anything in parallel or take file leases (Batch 6), or retry failures.
 //
-// Sequential on purpose. Two builders editing the same checkout at once is a
-// lost-update race, and the only thing that would make it safe — the leases
-// table's enforcement — does not exist yet. The table is there; nothing
-// acquires or checks it.
+// Batch 6 added the concurrency layer: the Coordinator picks a safe set of
+// ready tasks, this dispatches them together, and file leases keep two
+// builders off the same paths. Validation gating is untouched — a task still
+// parks at 'validating' and only the Layer 3 validators move it on.
+//
+// Concurrency is OFF by default and that is not conservatism, it is a real
+// constraint: see allowSharedCheckout below. Leases stop two builders writing
+// the same FILE; they do nothing about the fact that every builder currently
+// runs in the same checkout and the adapter attributes work by diffing that
+// checkout before and after the run.
 
 import { runBuilderTask } from './adapter'
+import { coordinateWave } from './coordinator'
+import { heartbeatLeases, releaseLeases } from './leases'
 import type { McpServerName } from './mcp'
 import { validateTask, type ValidationReport } from './validator'
 import { backend } from '@/lib/terminal/headless-run'
@@ -75,6 +83,33 @@ export interface ScheduleOptions {
   validate?: boolean
   /** Per-check wall-clock cap inside the validator. */
   validateTimeoutMs?: number
+  /**
+   * How many builders may run at once. Defaults to 1 — the Batch 4 behaviour.
+   *
+   * Anything above 1 needs isolated checkouts. See allowSharedCheckout.
+   */
+  maxConcurrent?: number
+  /**
+   * Checkout to run each task in, keyed by task id. When this returns a path,
+   * that task's builder runs there instead of options.cwd, which is what makes
+   * concurrency actually safe rather than merely lease-checked.
+   */
+  worktreeFor?: (taskId: string) => string | undefined
+  /**
+   * Run concurrently in ONE shared checkout anyway.
+   *
+   * Required, and named to be hard to pass by accident, because file leases do
+   * not make this safe. Two builders in one checkout share a git index and a
+   * HEAD, and the adapter decides what a task changed by snapshotting the
+   * worktree before and after the run — so with a second builder writing
+   * concurrently, task A is credited with task B's files, and the
+   * "wroteNothing" guard that catches hollow successes reads the other task's
+   * work as its own. Leases prevent the lost update; they cannot prevent the
+   * misattribution. Set this only when you accept that.
+   */
+  allowSharedCheckout?: boolean
+  /** Path globs per task, when tasks.expected_paths is not populated. */
+  declarationOverride?: Map<string, string[] | null>
 }
 
 export interface ScheduledTask {
@@ -99,6 +134,12 @@ export interface ScheduleResult {
   deferred: number
   /** Pending tasks whose dependencies are not satisfied yet. */
   blocked: number
+  /** Ready tasks parked this run because another task held their paths. */
+  conflicted: number
+  /** Leases released because their holder stopped heartbeating. */
+  reaped: number
+  /** Highest number of builders that were actually in flight at one moment. */
+  peakConcurrency: number
   /** Enabled layer-2 agents that were actually dispatchable on this host. */
   candidates: Agent[]
   warning: string | null
@@ -222,65 +263,40 @@ async function dispatchableAgents(): Promise<{ agents: Agent[]; warning: string 
  * usually fail the same way twice, and burning the budget to prove it is worse
  * than surfacing it.
  */
-export async function scheduleTasks(
-  missionId: string,
-  options: ScheduleOptions = {},
-): Promise<ScheduleResult> {
-  const satisfiedBy = new Set(options.satisfiedBy ?? DEFAULT_SATISFIED_BY)
-  const maxTasks = options.maxTasks ?? 10
+/**
+ * Run one task to completion: builder, then validators.
+ *
+ * Pulled out of the loop so a wave can run several of these at once. The
+ * lease is released in `finally` — on success, on failure, and on a throw —
+ * because a lease that outlives its task blocks every future task that touches
+ * those paths, and nothing else in a serverless request will clean it up.
+ */
+async function runOne(
+  task: Task,
+  agent: Agent,
+  rationale: string,
+  options: ScheduleOptions,
+): Promise<ScheduledTask> {
+  const cwd = options.worktreeFor?.(task.id) ?? options.cwd
 
-  const mission = await getMission(missionId)
-  if (!mission) throw new SchedulerError(`scheduleTasks: mission ${missionId} not found`)
-  if (mission.status !== 'running') {
-    throw new SchedulerError(`scheduleTasks: mission is "${mission.status}", expected "running"`)
-  }
+  // Long builds outlive the default lease TTL. Beating keeps the lease alive
+  // while the task is demonstrably still running, so the reaper can safely
+  // treat silence as death rather than guessing at a timeout.
+  const beat = setInterval(() => {
+    void heartbeatLeases(task.id).catch(() => {})
+  }, 60_000)
 
-  const { agents: candidates, warning } = await dispatchableAgents()
+  let success = false
+  let exitCode: number | null = null
+  let durationMs: number | null = null
+  let error: string | null = null
+  let validation: ValidationReport | null = null
+  let finalStatus: TaskStatus = 'failed'
 
-  const scheduled: ScheduledTask[] = []
-  let deferred = 0
-
-  // Re-read tasks each pass: a completed task can unblock its dependents, so
-  // eligibility has to be recomputed rather than snapshotted up front.
-  for (;;) {
-    const tasks = await listTasks(missionId)
-    const byId = new Map(tasks.map((t) => [t.id, t]))
-    const ready = tasks.filter((t) => isReady(t, byId, satisfiedBy))
-    if (ready.length === 0) break
-
-    if (scheduled.length >= maxTasks) {
-      deferred = ready.length
-      break
-    }
-
-    // Highest priority first, then creation order — which the Planner already
-    // wrote in topological order, so ties resolve to dependency order.
-    const order: Record<string, number> = { high: 0, medium: 1, low: 2 }
-    ready.sort((a, b) => (order[a.priority] - order[b.priority]) || a.createdAt.localeCompare(b.createdAt))
-    const task = ready[0]
-
-    const { agent, rationale } = pickAgent(task, candidates)
-    await updateTaskStatus(task.id, 'assigned', { assignedAgent: agent.id, rationale, by: 'scheduler' })
-
-    if (options.dryRun) {
-      scheduled.push({
-        task, agent, rationale, executed: false, success: null,
-        finalStatus: 'assigned', exitCode: null, durationMs: null, error: null,
-        validation: null,
-      })
-      // Without execution nothing will ever become ready, so stop after one
-      // pass rather than spinning on the same task forever.
-      deferred = ready.length - 1
-      break
-    }
-
-    let success = false
-    let exitCode: number | null = null
-    let durationMs: number | null = null
-    let error: string | null = null
+  try {
     try {
       const run = await runBuilderTask(task.id, {
-        cwd: options.cwd,
+        cwd,
         timeoutMs: options.timeoutMs,
         mcpServers: options.mcpServers,
       })
@@ -294,7 +310,7 @@ export async function scheduleTasks(
 
     // The adapter records the result but deliberately does not move the task —
     // that call is the caller's, and this is the caller.
-    let finalStatus: TaskStatus = success ? 'validating' : 'failed'
+    finalStatus = success ? 'validating' : 'failed'
     await updateTaskStatus(task.id, finalStatus, {
       by: 'scheduler',
       agent: agent.name,
@@ -305,13 +321,9 @@ export async function scheduleTasks(
     // The builder's verdict got the task to 'validating'. Only the validators
     // decide what happens next, and their decision is what unblocks
     // dependents — the loop re-reads statuses on the next pass.
-    let validation: ValidationReport | null = null
     if (success && options.validate !== false) {
       try {
-        validation = await validateTask(task.id, {
-          cwd: options.cwd,
-          timeoutMs: options.validateTimeoutMs,
-        })
+        validation = await validateTask(task.id, { cwd, timeoutMs: options.validateTimeoutMs })
         finalStatus = validation.finalStatus
         if (!validation.passed) {
           success = false
@@ -330,20 +342,163 @@ export async function scheduleTasks(
         finalStatus = 'failed'
       }
     }
+  } finally {
+    clearInterval(beat)
+    await releaseLeases(task.id).catch(() => {})
+  }
 
-    if (!success) {
-      await recordEvent(
-        missionId,
-        'scheduler.task_failed',
-        { agent: agent.name, cli: agent.cliCommand, exitCode, error, durationMs, retried: false },
-        task.id,
-      )
+  if (!success) {
+    await recordEvent(
+      task.missionId,
+      'scheduler.task_failed',
+      { agent: agent.name, cli: agent.cliCommand, exitCode, error, durationMs, retried: false },
+      task.id,
+    )
+  }
+
+  return { task, agent, rationale, executed: true, success, finalStatus, exitCode, durationMs, error, validation }
+}
+
+/**
+ * Assign and run every ready task in this mission.
+ *
+ * Waves, not one-at-a-time: each pass asks the Coordinator for a set of ready
+ * tasks whose declared paths do not collide, runs them together, and re-reads
+ * the graph. Failures are left failed. No auto-retry: a builder that failed
+ * once will usually fail the same way twice, and burning the budget to prove
+ * it is worse than surfacing it.
+ */
+export async function scheduleTasks(
+  missionId: string,
+  options: ScheduleOptions = {},
+): Promise<ScheduleResult> {
+  const satisfiedBy = new Set(options.satisfiedBy ?? DEFAULT_SATISFIED_BY)
+  const maxTasks = options.maxTasks ?? 10
+  const maxConcurrent = Math.max(1, options.maxConcurrent ?? 1)
+
+  // Refused rather than silently downgraded. A caller that asked for
+  // concurrency and got sequential execution would conclude the feature works
+  // and never find out why their wall-clock never improved; a caller that gets
+  // concurrency in one checkout would get corrupted attribution instead. Both
+  // are worse than being told.
+  if (maxConcurrent > 1 && !options.worktreeFor && !options.allowSharedCheckout) {
+    throw new SchedulerError(
+      `maxConcurrent=${maxConcurrent} needs isolated checkouts: pass worktreeFor to give each task its own ` +
+        `git worktree, or allowSharedCheckout:true to accept that the adapter will misattribute changed files ` +
+        `between concurrent tasks sharing one checkout.`,
+    )
+  }
+
+  const mission = await getMission(missionId)
+  if (!mission) throw new SchedulerError(`scheduleTasks: mission ${missionId} not found`)
+  if (mission.status !== 'running') {
+    throw new SchedulerError(`scheduleTasks: mission is "${mission.status}", expected "running"`)
+  }
+
+  const { agents: candidates, warning } = await dispatchableAgents()
+
+  const scheduled: ScheduledTask[] = []
+  let deferred = 0
+  let conflicted = 0
+  let reaped = 0
+  let peakConcurrency = 0
+
+  // Re-read tasks each pass: a completed task can unblock its dependents, so
+  // eligibility has to be recomputed rather than snapshotted up front.
+  for (;;) {
+    const tasks = await listTasks(missionId)
+    const byId = new Map(tasks.map((t) => [t.id, t]))
+    const ready = tasks.filter((t) => isReady(t, byId, satisfiedBy))
+    if (ready.length === 0) break
+
+    if (scheduled.length >= maxTasks) {
+      deferred = ready.length
+      break
     }
 
-    scheduled.push({
-      task, agent, rationale, executed: true, success,
-      finalStatus, exitCode, durationMs, error, validation,
+    // Highest priority first, then creation order — which the Planner already
+    // wrote in topological order, so ties resolve to dependency order. This
+    // ordering is also what keeps the Coordinator deadlock-free: the head of
+    // the list is always admitted, so a wave is never empty while work is
+    // ready and nothing else is running.
+    const order: Record<string, number> = { high: 0, medium: 1, low: 2 }
+    ready.sort((a, b) => (order[a.priority] - order[b.priority]) || a.createdAt.localeCompare(b.createdAt))
+
+    const room = Math.min(maxConcurrent, maxTasks - scheduled.length)
+    const plan = await coordinateWave(missionId, mission.repo, ready, {
+      maxConcurrent: room,
+      declarationOverride: options.declarationOverride,
     })
+    reaped += plan.reaped.length
+    conflicted = plan.held.filter((h) => h.reason === 'conflict').length
+
+    if (plan.admitted.length === 0) {
+      // Every ready task is queued behind a lease held by something this call
+      // is not running — a task still in flight from another request, or one
+      // whose lease has not expired yet. Stopping is correct; spinning here
+      // would burn the request on a wait that only another process can end.
+      await recordEvent(missionId, 'scheduler.wave_starved', {
+        ready: ready.length,
+        heldByConflict: conflicted,
+      })
+      deferred = ready.length
+      break
+    }
+
+    // Assign before dispatching so the roster view shows the whole wave as
+    // claimed rather than one task at a time.
+    const wave: { task: Task; agent: Agent; rationale: string }[] = []
+    for (const { task } of plan.admitted) {
+      const { agent, rationale } = pickAgent(task, candidates)
+      await updateTaskStatus(task.id, 'assigned', { assignedAgent: agent.id, rationale, by: 'scheduler' })
+      wave.push({ task, agent, rationale })
+    }
+
+    if (options.dryRun) {
+      for (const { task, agent, rationale } of wave) {
+        scheduled.push({
+          task, agent, rationale, executed: false, success: null,
+          finalStatus: 'assigned', exitCode: null, durationMs: null, error: null,
+          validation: null,
+        })
+      }
+      // Nothing executed means nothing will ever become ready, so stop after
+      // one pass rather than spinning on the same tasks forever. The leases
+      // this wave took are not held against a run that will not happen.
+      for (const { task } of wave) await releaseLeases(task.id).catch(() => {})
+      deferred = ready.length - wave.length
+      break
+    }
+
+    peakConcurrency = Math.max(peakConcurrency, wave.length)
+    await recordEvent(missionId, 'scheduler.wave_dispatched', {
+      concurrency: wave.length,
+      tasks: wave.map((w) => ({ taskId: w.task.id, title: w.task.title, agent: w.agent.name })),
+    })
+
+    // allSettled, not all: one builder throwing must not abandon the others
+    // mid-run, which would leak their leases until the reaper caught up.
+    const results = await Promise.allSettled(
+      wave.map(({ task, agent, rationale }) => runOne(task, agent, rationale, options)),
+    )
+
+    for (let i = 0; i < results.length; i++) {
+      const settled = results[i]
+      if (settled.status === 'fulfilled') {
+        scheduled.push(settled.value)
+        continue
+      }
+      // runOne releases its own lease in a finally, so this is a genuinely
+      // unexpected throw; record it as a failed task rather than losing it.
+      const { task, agent, rationale } = wave[i]
+      const error = settled.reason instanceof Error ? settled.reason.message : String(settled.reason)
+      await releaseLeases(task.id).catch(() => {})
+      await updateTaskStatus(task.id, 'failed', { by: 'scheduler', error }).catch(() => {})
+      scheduled.push({
+        task, agent, rationale, executed: true, success: false,
+        finalStatus: 'failed', exitCode: null, durationMs: null, error, validation: null,
+      })
+    }
   }
 
   const finalTasks = await listTasks(missionId)
@@ -356,10 +511,14 @@ export async function scheduleTasks(
     failed: scheduled.filter((s) => s.executed && !s.success).length,
     deferred,
     blocked,
+    conflicted,
+    reaped,
+    peakConcurrency,
+    maxConcurrent,
     dryRun: !!options.dryRun,
   })
 
-  return { missionId, scheduled, deferred, blocked, candidates, warning }
+  return { missionId, scheduled, deferred, blocked, conflicted, reaped, peakConcurrency, candidates, warning }
 }
 
 /** Latest recorded result for a task, or null. */

@@ -41,6 +41,18 @@ interface AgentWithDetection extends Agent {
   instructions: string | null
 }
 
+interface LeaseView {
+  id: string
+  pathGlob: string
+  leaseType: 'read' | 'write' | 'exclusive'
+  expiresAt: string
+}
+
+interface ConflictView {
+  blockedBy: string[]
+  detail: string
+}
+
 interface ValidationPayload {
   passed?: boolean
   failedChecks?: string[]
@@ -90,6 +102,8 @@ export default function MissionsPage() {
   const [agents, setAgents] = useState<AgentWithDetection[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
+  const [leases, setLeases] = useState<Record<string, LeaseView[]>>({})
+  const [conflicts, setConflicts] = useState<Record<string, ConflictView>>({})
   const [validations, setValidations] = useState<Record<string, ValidationPayload>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -122,6 +136,8 @@ export default function MissionsPage() {
       const data = await res.json()
       setTasks(data.tasks ?? [])
       setValidations(data.validations ?? {})
+      setLeases(data.leases ?? {})
+      setConflicts(data.conflicts ?? {})
     } catch {
       /* keep last-known */
     }
@@ -244,6 +260,10 @@ export default function MissionsPage() {
               {selected &&
                 tasks.map((t, i) => {
                   const validation = validations[t.id]
+                  const held = leases[t.id] ?? []
+                  // Only meaningful while the task has not run: a conflict
+                  // recorded before a successful run is history, not state.
+                  const conflict = t.status === 'pending' ? conflicts[t.id] : undefined
                   return (
                     <div key={t.id} className="rounded-lg border border-border bg-surface-secondary px-3 py-2.5">
                       <div className="flex items-start justify-between gap-3">
@@ -269,6 +289,41 @@ export default function MissionsPage() {
                           <span>depends on {t.dependsOn.map((d) => `#${taskIndex.get(d) ?? '?'}`).join(', ')}</span>
                         )}
                       </div>
+                      {held.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className="font-mono text-[10px] text-muted-foreground">leases:</span>
+                          {held.map((l) => (
+                            <span
+                              key={l.id}
+                              title={`expires ${new Date(l.expiresAt).toLocaleTimeString()}`}
+                              className={`rounded border px-1.5 py-0.5 font-mono text-[9px] ${
+                                l.leaseType === 'exclusive'
+                                  ? 'border-warning/40 bg-warning/10 text-warning'
+                                  : l.leaseType === 'write'
+                                    ? 'border-primary/40 bg-primary/10 text-primary'
+                                    : 'border-border text-muted-foreground'
+                              }`}
+                            >
+                              {l.leaseType} {l.pathGlob}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {/* Two different kinds of "pending". A dependency wait
+                          resolves itself; a file conflict resolves when the
+                          blocking task lets go, and shows which one that is. */}
+                      {conflict && (
+                        <div className="mt-1.5 font-mono text-[10px] text-warning">
+                          queued — file conflict with{' '}
+                          {conflict.blockedBy.map((d) => `#${taskIndex.get(d) ?? '?'}`).join(', ') || 'another task'}
+                          <span className="ml-1 text-muted-foreground">({conflict.detail})</span>
+                        </div>
+                      )}
+                      {!conflict && t.status === 'pending' && t.dependsOn.length > 0 && (
+                        <div className="mt-1.5 font-mono text-[10px] text-muted-foreground">
+                          queued — waiting on dependencies
+                        </div>
+                      )}
                       {validation && (
                         <div className="mt-2 border-t border-border pt-2 font-mono text-[10px]">
                           <span className={validation.passed ? 'text-primary' : 'text-red-400'}>

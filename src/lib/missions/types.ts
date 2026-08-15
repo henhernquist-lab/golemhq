@@ -97,6 +97,15 @@ export interface Task {
   createdAt: string
   startedAt: string | null
   completedAt: string | null
+  /**
+   * Path globs this task expects to write, for Coordinator overlap analysis.
+   *
+   * null is "undeclared" and is NOT the same as []. Undeclared means the
+   * Coordinator has no basis to let it run alongside anything, so it takes the
+   * whole repo; an explicit empty list means it genuinely writes nothing.
+   * Always null when the Batch 6 migration has not been applied.
+   */
+  expectedPaths: string[] | null
 }
 
 // ── Results ───────────────────────────────────────────────────────────
@@ -159,4 +168,10 @@ export interface Lease {
   acquiredAt: string
   expiresAt: string
   releasedAt: string | null
+  /** Proof of life. Null on rows written before the Batch 6 migration. */
+  heartbeatAt: string | null
+  /** Denormalised from the owning task. Null pre-migration. */
+  missionId: string | null
+  /** Denormalised missions.repo — leases only conflict within one checkout. */
+  repo: string | null
 }

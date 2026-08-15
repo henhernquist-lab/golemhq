@@ -2,6 +2,8 @@ import { supabase } from '@/lib/supabase'
 import { isTableMissing } from '@/lib/usage/log'
 import {
   ACTIVE_MISSION_STATUSES,
+  type Lease,
+  type LeaseType,
   type Agent,
   type AgentLayer,
   type Mission,
@@ -86,6 +88,7 @@ interface TaskRow {
   created_at: string
   started_at: string | null
   completed_at: string | null
+  expected_paths?: string[] | null
 }
 
 const toTask = (r: TaskRow): Task => ({
@@ -100,6 +103,9 @@ const toTask = (r: TaskRow): Task => ({
   createdAt: r.created_at,
   startedAt: r.started_at,
   completedAt: r.completed_at,
+  // undefined (column absent) and null (present, undeclared) both mean "no
+  // declaration" to the Coordinator, which is the conservative reading.
+  expectedPaths: r.expected_paths ?? null,
 })
 
 interface EventRow {
@@ -307,7 +313,37 @@ export interface CreateTaskInput {
   dependsOn?: string[]
 }
 
+/**
+ * Task columns, with expected_paths only when the Batch 6 migration is applied.
+ *
+ * Probed once and remembered. Asking for a column that does not exist fails the
+ * whole select rather than returning null for it, so every task read would
+ * break on a pre-migration database — and the Coordinator is designed to
+ * degrade to sequential dispatch there, not to take the mission down.
+ */
+let expectedPathsColumn: boolean | null = null
+
+function taskColumns(): string {
+  const base =
+    'id, mission_id, title, description, status, priority, assigned_agent, depends_on, created_at, started_at, completed_at'
+  return expectedPathsColumn === false ? base : `${base}, expected_paths`
+}
+
+/**
+ * Decide once whether expected_paths can be selected.
+ *
+ * A probe rather than a try/retry around every read: retrying would double the
+ * round trips on the pre-migration path, and the answer cannot change inside a
+ * process lifetime without a deploy.
+ */
+async function ensureTaskColumns(): Promise<void> {
+  if (expectedPathsColumn !== null) return
+  const { error } = await supabase.from('tasks').select('expected_paths').limit(1)
+  expectedPathsColumn = !(error && /column .*expected_paths.* does not exist/i.test(error.message ?? ''))
+}
+
 export async function createTask(missionId: string, input: CreateTaskInput): Promise<Task> {
+  await ensureTaskColumns()
   const { data, error } = await supabase
     .from('tasks')
     .insert({
@@ -320,12 +356,12 @@ export async function createTask(missionId: string, input: CreateTaskInput): Pro
       status: input.assignedAgent ? 'assigned' : 'pending',
     })
     .select(
-      'id, mission_id, title, description, status, priority, assigned_agent, depends_on, created_at, started_at, completed_at',
+      taskColumns(),
     )
     .single()
   if (error) fail('createTask', error)
 
-  const task = toTask(data as TaskRow)
+  const task = toTask(data as unknown as TaskRow)
   await recordEvent(
     missionId,
     'task.created',
@@ -336,27 +372,29 @@ export async function createTask(missionId: string, input: CreateTaskInput): Pro
 }
 
 export async function getTask(id: string): Promise<Task | null> {
+  await ensureTaskColumns()
   const { data, error } = await supabase
     .from('tasks')
     .select(
-      'id, mission_id, title, description, status, priority, assigned_agent, depends_on, created_at, started_at, completed_at',
+      taskColumns(),
     )
     .eq('id', id)
     .maybeSingle()
   if (error) fail('getTask', error)
-  return data ? toTask(data as TaskRow) : null
+  return data ? toTask(data as unknown as TaskRow) : null
 }
 
 export async function listTasks(missionId: string): Promise<Task[]> {
+  await ensureTaskColumns()
   const { data, error } = await supabase
     .from('tasks')
     .select(
-      'id, mission_id, title, description, status, priority, assigned_agent, depends_on, created_at, started_at, completed_at',
+      taskColumns(),
     )
     .eq('mission_id', missionId)
     .order('created_at', { ascending: true })
   if (error) fail('listTasks', error)
-  return ((data ?? []) as TaskRow[]).map(toTask)
+  return ((data ?? []) as unknown as TaskRow[]).map(toTask)
 }
 
 /**
@@ -383,7 +421,7 @@ export async function updateTaskStatus(
     .update(patch)
     .eq('id', taskId)
     .select(
-      'id, mission_id, title, description, status, priority, assigned_agent, depends_on, created_at, started_at, completed_at',
+      taskColumns(),
     )
     .single()
   if (error) fail('updateTaskStatus', error)
@@ -394,7 +432,7 @@ export async function updateTaskStatus(
     { from: previous.status, to: status, ...detail },
     taskId,
   )
-  return toTask(data as TaskRow)
+  return toTask(data as unknown as TaskRow)
 }
 
 // ── Results ───────────────────────────────────────────────────────────
@@ -736,4 +774,190 @@ export async function getDetections(): Promise<Map<string, AgentDetectionRecord>
       { cliPath: r.cli_path, cliVersion: r.cli_version, detectedAt: r.detected_at, detectedHost: r.detected_host },
     ]),
   )
+}
+
+// ── Leases (Batch 6) ──────────────────────────────────────────────────
+// The table is Batch 1's `leases`. mission_id / repo / heartbeat_at are Batch
+// 6 additions and every read here tolerates their absence, because the
+// Coordinator's fallback on a pre-migration database is sequential dispatch —
+// the Batch 4 behaviour — rather than a failed mission.
+
+interface LeaseRow {
+  id: string
+  task_id: string
+  path_glob: string
+  lease_type: LeaseType
+  owner_agent: string | null
+  acquired_at: string
+  expires_at: string
+  released_at: string | null
+  heartbeat_at?: string | null
+  mission_id?: string | null
+  repo?: string | null
+}
+
+const toLease = (r: LeaseRow): Lease => ({
+  id: r.id,
+  taskId: r.task_id,
+  pathGlob: r.path_glob,
+  leaseType: r.lease_type,
+  ownerAgent: r.owner_agent,
+  acquiredAt: r.acquired_at,
+  expiresAt: r.expires_at,
+  releasedAt: r.released_at ?? null,
+  heartbeatAt: r.heartbeat_at ?? null,
+  missionId: r.mission_id ?? null,
+  repo: r.repo ?? null,
+})
+
+let leaseExtrasColumn: boolean | null = null
+
+const LEASE_BASE = 'id, task_id, path_glob, lease_type, owner_agent, acquired_at, expires_at, released_at'
+const LEASE_EXTRAS = 'heartbeat_at, mission_id, repo'
+
+async function ensureLeaseColumns(): Promise<void> {
+  if (leaseExtrasColumn !== null) return
+  const { error } = await supabase.from('leases').select(LEASE_EXTRAS).limit(1)
+  leaseExtrasColumn = !(error && /column .* does not exist/i.test(error.message ?? ''))
+}
+
+function leaseColumns(): string {
+  return leaseExtrasColumn === false ? LEASE_BASE : `${LEASE_BASE}, ${LEASE_EXTRAS}`
+}
+
+export interface AcquireLeaseInput {
+  taskId: string
+  missionId: string
+  repo: string
+  pathGlob: string
+  leaseType: LeaseType
+  ownerAgent: string | null
+  expiresAt: string
+}
+
+export async function acquireLeaseRow(input: AcquireLeaseInput): Promise<Lease> {
+  await ensureLeaseColumns()
+  const now = new Date().toISOString()
+  const row: Record<string, unknown> = {
+    task_id: input.taskId,
+    path_glob: input.pathGlob,
+    lease_type: input.leaseType,
+    owner_agent: input.ownerAgent,
+    expires_at: input.expiresAt,
+  }
+  if (leaseExtrasColumn !== false) {
+    row.mission_id = input.missionId
+    row.repo = input.repo
+    row.heartbeat_at = now
+  }
+  const { data, error } = await supabase.from('leases').insert(row).select(leaseColumns()).single()
+  if (error) fail('acquireLeaseRow', error)
+  return toLease(data as unknown as LeaseRow)
+}
+
+/**
+ * Every unreleased lease in a repo.
+ *
+ * Without the repo column there is nothing to filter on, so this falls back to
+ * every active lease everywhere. That is over-broad rather than under-broad —
+ * it can only cause extra serialisation, never a missed conflict.
+ */
+export async function listActiveLeases(repo?: string): Promise<Lease[]> {
+  await ensureLeaseColumns()
+  let query = supabase.from('leases').select(leaseColumns()).is('released_at', null)
+  if (repo && leaseExtrasColumn !== false) query = query.eq('repo', repo)
+  const { data, error } = await query.order('acquired_at', { ascending: true })
+  if (error) {
+    if (isTableMissing(error)) return []
+    fail('listActiveLeases', error)
+  }
+  return ((data ?? []) as unknown as LeaseRow[]).map(toLease)
+}
+
+export async function listLeasesForTasks(taskIds: string[]): Promise<Lease[]> {
+  if (taskIds.length === 0) return []
+  await ensureLeaseColumns()
+  const { data, error } = await supabase
+    .from('leases')
+    .select(leaseColumns())
+    .in('task_id', taskIds)
+    .is('released_at', null)
+  if (error) {
+    if (isTableMissing(error)) return []
+    fail('listLeasesForTasks', error)
+  }
+  return ((data ?? []) as unknown as LeaseRow[]).map(toLease)
+}
+
+/** Release everything a task holds. Returns how many rows moved. */
+export async function releaseLeasesForTask(taskId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from('leases')
+    .update({ released_at: new Date().toISOString() })
+    .eq('task_id', taskId)
+    .is('released_at', null)
+    .select('id')
+  if (error) {
+    if (isTableMissing(error)) return 0
+    fail('releaseLeasesForTask', error)
+  }
+  return (data ?? []).length
+}
+
+/** Push a task's leases forward. No-op pre-migration (nothing to beat with). */
+export async function heartbeatLeasesForTask(taskId: string, expiresAt: string): Promise<number> {
+  await ensureLeaseColumns()
+  if (leaseExtrasColumn === false) return 0
+  const { data, error } = await supabase
+    .from('leases')
+    .update({ heartbeat_at: new Date().toISOString(), expires_at: expiresAt })
+    .eq('task_id', taskId)
+    .is('released_at', null)
+    .select('id')
+  if (error) {
+    if (isTableMissing(error)) return 0
+    fail('heartbeatLeasesForTask', error)
+  }
+  return (data ?? []).length
+}
+
+/**
+ * Release leases whose holder has stopped proving it is alive.
+ *
+ * Selected first and released by id rather than released in one predicate
+ * update, because the caller has to be able to say WHICH leases were reaped —
+ * a reaper that reports only a count cannot be verified, and this is the path
+ * that unwedges a mission after a crash.
+ */
+export async function reapExpiredLeases(nowIso: string, repo?: string): Promise<Lease[]> {
+  await ensureLeaseColumns()
+  let query = supabase.from('leases').select(leaseColumns()).is('released_at', null).lt('expires_at', nowIso)
+  if (repo && leaseExtrasColumn !== false) query = query.eq('repo', repo)
+  const { data, error } = await query
+  if (error) {
+    if (isTableMissing(error)) return []
+    fail('reapExpiredLeases', error)
+  }
+  const stale = ((data ?? []) as unknown as LeaseRow[]).map(toLease)
+  if (stale.length === 0) return []
+
+  const { error: relErr } = await supabase
+    .from('leases')
+    .update({ released_at: nowIso })
+    .in('id', stale.map((l) => l.id))
+    .is('released_at', null)
+  if (relErr) fail('reapExpiredLeases.release', relErr)
+  return stale
+}
+
+/** Persist a task's declared paths. Silently no-ops pre-migration. */
+export async function setTaskExpectedPaths(taskId: string, paths: string[] | null): Promise<boolean> {
+  await ensureTaskColumns()
+  if (expectedPathsColumn === false) return false
+  const { error } = await supabase.from('tasks').update({ expected_paths: paths }).eq('id', taskId)
+  if (error) {
+    if (/column .*expected_paths.* does not exist/i.test(error.message ?? '')) return false
+    fail('setTaskExpectedPaths', error)
+  }
+  return true
 }
