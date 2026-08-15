@@ -28,7 +28,7 @@ export const SUGGESTION_CARD_POOL: SuggestionCard[] = [
   { label: 'Analyze data', glyph: '📊', prompt: 'Analyze this data: ', description: 'Find patterns and insights in your data' },
   { label: 'Check my email', glyph: '@', prompt: 'Check my email for new messages', description: 'Read and draft email responses' },
   { label: 'Draft an email', glyph: '✉', prompt: 'Draft an email that ', description: 'Compose professional or personal emails quickly' },
-  { label: 'Create flashcards', glyph: '🃏', prompt: 'Create flashcards for: ', description: 'Generate study flashcards from any material' },
+  { label: 'Extract action items', glyph: '✓', prompt: 'Extract the action items from: ', description: 'Pull to-dos and next steps out of any text' },
   // Set 3 — Thu
   { label: 'Write a blog post', glyph: '📝', prompt: 'Write a blog post about ', description: 'Draft engaging long-form content on any topic' },
   { label: 'Design a system', glyph: '🏗', prompt: 'Design a system architecture for ', description: 'Plan scalable, maintainable system designs' },

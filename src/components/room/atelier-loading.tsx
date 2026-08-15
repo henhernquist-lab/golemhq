@@ -27,7 +27,7 @@ export function LoadingScreen() {
       >
         {/* Logo */}
         <div className="font-display text-xl font-bold tracking-tight text-foreground">
-          Golem<span className="text-primary">.</span>AGENT
+          Golem{' '}<span className="text-primary">HQ</span>
         </div>
 
         {/* Loading indicator */}

@@ -73,9 +73,8 @@ export function GolemLogo({ size = 'md', animated = true }: GolemLogoProps) {
           ease: 'easeInOut',
         }}
       >
-        <span className="text-foreground">Golem</span>
-        <span className="text-primary">.</span>
-        <span className="text-foreground">AGENT</span>
+        <span className="text-foreground">Golem</span>{' '}
+        <span className="text-primary">HQ</span>
       </motion.div>
     </Wrapper>
   )

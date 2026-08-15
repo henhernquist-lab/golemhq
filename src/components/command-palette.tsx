@@ -17,7 +17,6 @@ import {
   Brain,
   StickyNote,
   Bell,
-  MessageSquarePlus,
   Loader2,
   Aperture,
   Briefcase,
@@ -36,7 +35,7 @@ interface NavItem {
 }
 
 const MAIN_ROUTES: NavItem[] = [
-  { label: 'Chat', path: '/', icon: Home },
+  { label: 'Home', path: '/', icon: Home },
   { label: 'Tools & Resources', path: '/resources', icon: LayoutGrid },
   { label: 'Saved Items', path: '/resources/saved', icon: Archive },
   { label: 'Prompt Library', path: '/prompts', icon: BookMarked, keywords: 'prompts' },
@@ -79,7 +78,6 @@ interface ActionItem {
 
 const ACTIONS: ActionItem[] = [
   { label: 'New note', icon: StickyNote, run: (router) => router.push('/grimoire') },
-  { label: 'New chat', icon: MessageSquarePlus, run: (router) => router.push('/') },
   { label: 'Log a race result', icon: Timer, run: (router) => router.push('/resources/race-pace?tab=log') },
   { label: 'Scan a repo', icon: GitBranch, run: (router) => router.push('/resources/repo-scanner') },
   { label: 'Something went wrong', icon: AlertOctagon, run: (router) => router.push('/resources/root-cause?start=1') },

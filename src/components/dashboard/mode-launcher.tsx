@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { MessageSquare, Swords, ListTree, Smartphone, Wand2 } from 'lucide-react'
+import { Swords, ListTree, Smartphone, Wand2 } from 'lucide-react'
 import { Card } from '@/components/card'
 
 const MODES = [
@@ -9,7 +9,6 @@ const MODES = [
   { href: '/forge', label: 'The Forge', desc: 'Autonomous coding agent', icon: Swords },
   { href: '/scribe', label: 'Prompt Engineer', desc: 'Prompt engineering lab', icon: Wand2 },
   { href: '/m/chat', label: 'Shard', desc: 'Mobile chat', icon: Smartphone },
-  { href: '/chat', label: 'Chat', desc: 'Ask Golem anything', icon: MessageSquare },
 ]
 
 export function ModeLauncher() {
