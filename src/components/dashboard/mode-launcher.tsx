@@ -1,14 +1,13 @@
 'use client'
 
 import Link from 'next/link'
-import { MessageSquare, Swords, GraduationCap, Smartphone, Wand2 } from 'lucide-react'
+import { MessageSquare, Swords, ListTree, Smartphone, Wand2 } from 'lucide-react'
 import { Card } from '@/components/card'
 
 const MODES = [
+  { href: '/missions', label: 'Missions', desc: 'Mission, task and agent state', icon: ListTree },
   { href: '/forge', label: 'The Forge', desc: 'Autonomous coding agent', icon: Swords },
-  { href: '/scriptorium', label: 'The Scriptorium', desc: 'Tutorials and skills', icon: GraduationCap },
-  { href: '/scribe', label: 'The Scribe', desc: 'Prompt engineering lab', icon: Wand2 },
-
+  { href: '/scribe', label: 'Prompt Engineer', desc: 'Prompt engineering lab', icon: Wand2 },
   { href: '/m/chat', label: 'Shard', desc: 'Mobile chat', icon: Smartphone },
   { href: '/chat', label: 'Chat', desc: 'Ask Golem anything', icon: MessageSquare },
 ]

@@ -47,7 +47,7 @@ export function ProviderTopology() {
                 }}
               />
               <Link
-                href={node.id === 'models' ? '/models' : '/settings'}
+                href="/settings"
                 className={`flex h-10 w-10 flex-col items-center justify-center rounded-full border ${node.color} bg-surface-elevated transition-transform hover:scale-110`}
               >
                 <Icon className="h-4 w-4" />

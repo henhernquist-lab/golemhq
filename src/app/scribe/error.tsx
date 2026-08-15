@@ -22,7 +22,7 @@ export default function ScribeError({
           <AlertTriangle className="h-5 w-5" aria-hidden="true" />
         </div>
         <p className="mb-2 font-mono text-[10px] uppercase tracking-[0.22em] text-destructive/70">
-          Scribe unavailable
+          Prompt Engineer unavailable
         </p>
         <h1 className="mb-3 font-serif text-2xl text-foreground">The prompt room hit an error.</h1>
         <p className="mb-7 text-sm leading-relaxed text-muted-foreground">

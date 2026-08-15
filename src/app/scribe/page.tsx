@@ -89,8 +89,8 @@ function ArchitectPageInner() {
           // The endpoint should return JSON, but this keeps a stale deployment
           // or an upstream proxy failure from turning markup into chat output.
           message = res.status >= 500
-            ? 'The Scribe server hit an unexpected error. Try again shortly.'
-            : 'The Scribe request was rejected. Check the prompt and try again.'
+            ? 'The Prompt Engineer server hit an unexpected error. Try again shortly.'
+            : 'The Prompt Engineer request was rejected. Check the prompt and try again.'
         }
         setLines((l) => [...l, { kind: 'error', text: message }])
         setRunning(false)
@@ -394,7 +394,7 @@ function ArchitectPageInner() {
                       }`}
                     >
                       <Wand2 className="h-3 w-3" />
-                      {isIntake ? 'Intake' : 'The Scribe'}
+                      {isIntake ? 'Intake' : 'Prompt Engineer'}
                     </div>
                     <div className="whitespace-pre-wrap font-sans text-[14px] leading-relaxed text-foreground">
                       {line.text}

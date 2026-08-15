@@ -13,15 +13,14 @@ import {
   Swords,
   FlaskConical,
   Brain,
-  GraduationCap,
   Settings,
   BarChart3,
-  Cpu,
   Box,
   Home,
   Wand2,
   GitBranch,
   ListTree,
+  ChevronDown,
   type LucideIcon,
 } from 'lucide-react'
 import { GolemLogo } from './golem-logo'
@@ -51,17 +50,15 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: '/', icon: Home, label: 'Home', desc: 'Dashboard overview' },
       { href: '/chat', icon: MessageSquare, label: 'Chat', desc: 'Ask Golem anything' },
-      { href: '/trials', icon: Cpu, label: 'The Trials', desc: 'Benchmark model performance' },
       { href: '/usage', icon: BarChart3, label: 'Usage', desc: 'Track tokens, cost, and alerts' },
     ],
   },
   {
     title: 'Workspace',
     items: [
-      { href: '/forge', icon: Swords, label: 'The Forge', desc: 'Autonomous coding agent' },
       { href: '/missions', icon: ListTree, label: 'Missions', desc: 'Mission, task and agent state' },
-      { href: '/scriptorium', icon: GraduationCap, label: 'The Scriptorium', desc: 'Tutorials and skills' },
-      { href: '/scribe', icon: Wand2, label: 'The Scribe', desc: 'Prompt engineering lab' },
+      { href: '/forge', icon: Swords, label: 'The Forge', desc: 'Autonomous coding agent' },
+      { href: '/scribe', icon: Wand2, label: 'Prompt Engineer', desc: 'Prompt engineering lab' },
       { href: '/lab', icon: FlaskConical, label: 'Lab', desc: 'Experiments and overnight runs' },
     ],
   },
@@ -71,9 +68,9 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
       { href: '/resources', icon: Wrench, label: 'Tools', desc: 'Built-in tools and resources' },
       { href: '/prompts', icon: BookMarked, label: 'Prompts', desc: 'Saved prompts and recipes' },
       { href: '/resources/memory', icon: Brain, label: 'Memory', desc: 'Saved facts and context' },
-      { href: '/atelier', icon: Box, label: 'The Atelier', desc: '3D headquarters view' },
     ],
-  },    {
+  },
+  {
     title: 'System',
     items: [
       { href: '/settings', icon: Settings, label: 'Settings', desc: 'Account and integrations' },
@@ -81,6 +78,35 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     ],
   },
 ]
+
+/** Demoted, low-traffic destinations — present but not competing for primary attention. */
+const MORE_SECTION: { title: string; items: NavItem[] } = {
+  title: 'More',
+  items: [{ href: '/atelier', icon: Box, label: 'The Atelier', desc: '3D headquarters view' }],
+}
+
+function NavLink({ item, isActive }: { item: NavItem; isActive: boolean }) {
+  const Icon = item.icon
+  return (
+    <Link
+      href={item.href}
+      className={`group flex items-start gap-3 rounded-md px-2 py-2 transition-colors ${
+        isActive
+          ? 'bg-surface-elevated text-foreground'
+          : 'text-muted-foreground hover:bg-surface-elevated/60 hover:text-foreground'
+      }`}
+    >
+      <Icon className={`mt-0.5 h-4 w-4 flex-shrink-0 ${isActive ? 'text-primary' : 'text-muted-foreground/70 group-hover:text-foreground'}`} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium">{item.label}</span>
+          {isActive && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+        </div>
+        <p className="truncate text-[10px] text-muted-foreground/70">{item.desc}</p>
+      </div>
+    </Link>
+  )
+}
 
 function formatRelativeTime(ts: number): string {
   const diffMs = Date.now() - ts
@@ -104,6 +130,7 @@ export function LeftSidebar({
   const pathname = usePathname()
 
   const [createRepoOpen, setCreateRepoOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
 
   return (
     <aside className="flex h-full w-[260px] flex-col border-r border-border bg-surface-secondary">
@@ -135,7 +162,6 @@ export function LeftSidebar({
               <div className="space-y-0.5">
                 {section.items.map((item) => {
                   const isActive = pathname === item.href
-                  const Icon = item.icon
                   if (item.href === '#') {
                     return (
                       <button
@@ -155,31 +181,39 @@ export function LeftSidebar({
                       </button>
                     )
                   }
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={`group flex items-start gap-3 rounded-md px-2 py-2 transition-colors ${
-                        isActive
-                          ? 'bg-surface-elevated text-foreground'
-                          : 'text-muted-foreground hover:bg-surface-elevated/60 hover:text-foreground'
-                      }`}
-                    >
-                      <Icon className={`mt-0.5 h-4 w-4 flex-shrink-0 ${isActive ? 'text-primary' : 'text-muted-foreground/70 group-hover:text-foreground'}`} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-medium">{item.label}</span>
-                          {isActive && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
-                        </div>
-                        <p className="truncate text-[10px] text-muted-foreground/70">{item.desc}</p>
-                      </div>
-                    </Link>
-                  )
+                  return <NavLink key={item.href} item={item} isActive={isActive} />
                 })}
               </div>
             </div>
           ))}
         </nav>
+
+        {/* Secondary / demoted nav — present but out of the way */}
+        <div>
+          <button
+            onClick={() => setMoreOpen((v) => !v)}
+            className="flex w-full items-center justify-between px-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70 transition-colors hover:text-foreground"
+          >
+            {MORE_SECTION.title}
+            <ChevronDown className={`h-3 w-3 transition-transform ${moreOpen ? 'rotate-180' : ''}`} />
+          </button>
+          <AnimatePresence initial={false}>
+            {moreOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mt-2 space-y-0.5">
+                  {MORE_SECTION.items.map((item) => (
+                    <NavLink key={item.href} item={item} isActive={pathname === item.href} />
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
         <div className="border-t border-border" />
 
