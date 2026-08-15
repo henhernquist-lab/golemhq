@@ -99,6 +99,12 @@ Backlog is trimmed from the front. For full-screen TUIs (Gemini CLI, Claude Code
 The nudge must be HELD. Delivering both SIGWINCHes before the app handles either one means it reads the size it already had and does nothing. Measured against real OpenCode 1.18 in a real PTY: 50/60/70/80/90ms holds produced zero bytes, 100ms+ produced a full ~7KB repaint every time. The hold is 250ms in both managers. This is why the truncation repair above appeared to work for two years and never actually repaired an OpenCode session.
 forceRepaint reports whether output actually followed, not whether the signal was sent. A repaint that provoked nothing must not clear the "screen may be stale" banner.
 Any failure the user can see must say what it is and offer an action (Redraw / Restart), not fail silently and not repeat advice that already didn't work.
+Concurrent builders get their own git worktree (Batch 6.5, worktrees.ts). Leases stop two builders writing the same FILE; they do nothing about attribution, because adapter.ts decides what a task did by diffing the checkout around the run — in a shared checkout task A gets credited with task B's files even when no lease overlaps. Worktrees make that impossible by construction rather than by agreement.
+Worktrees live in /tmp, never under the repo. `/` is a 32G overlay that has sat at 91% for this whole project and has twice truncated .env.local by filling; /tmp is a separate 44G device. A checkout here is 21M.
+node_modules is symlinked into each worktree — validators run `npx --no-install`, and a bare worktree fails every check with "this is not the tsc command you are looking for". This assumes the repo ignores node_modules. A per-worktree exclude cannot fix it where that is false: `git rev-parse --git-path info/exclude` resolves to the SHARED admin dir.
+`git worktree remove --force` takes uncommitted changes with it, so a task's output is committed to `golem/task/<id>` BEFORE the worktree is released. Isolating work and then deleting it is worse than not isolating it. What merges those branches is the approval gate's call, not the scheduler's.
+runHeadless frames every command as `cd <cwd> 2>/dev/null; ...` — a failed cd is SWALLOWED and the command runs in the previous directory. Anything that depends on cwd for isolation must verify the directory exists rather than trusting the cd.
+
 6. Orchestration (missions / agents)
 
 Three layers: L1 orchestrators (plan/schedule/coordinate, never write code) → L2 builders (each bound to a specific CLI) → L3 validators.

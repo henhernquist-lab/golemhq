@@ -20,6 +20,14 @@
 import { runBuilderTask } from './adapter'
 import { coordinateWave } from './coordinator'
 import { heartbeatLeases, releaseLeases } from './leases'
+import {
+  allocateWorktree,
+  preserveWorktree,
+  releaseWorktree,
+  reapOrphanedWorktrees,
+  resolveBaseCommit,
+  type Worktree,
+} from './worktrees'
 import type { McpServerName } from './mcp'
 import { validateTask, type ValidationReport } from './validator'
 import { backend } from '@/lib/terminal/headless-run'
@@ -91,10 +99,20 @@ export interface ScheduleOptions {
   maxConcurrent?: number
   /**
    * Checkout to run each task in, keyed by task id. When this returns a path,
-   * that task's builder runs there instead of options.cwd, which is what makes
-   * concurrency actually safe rather than merely lease-checked.
+   * that task's builder runs there instead of options.cwd.
+   *
+   * Batch 6.5 populates this automatically — every task in a concurrent wave
+   * gets a real `git worktree` of its own. Supplying it by hand overrides that
+   * and is the escape hatch for a caller managing its own checkouts.
    */
   worktreeFor?: (taskId: string) => string | undefined
+  /**
+   * Do NOT allocate per-task worktrees, even when running concurrently.
+   *
+   * Debugging only. Concurrency without isolation corrupts attribution — see
+   * allowSharedCheckout — so this needs that flag too.
+   */
+  noWorktrees?: boolean
   /**
    * Run concurrently in ONE shared checkout anyway.
    *
@@ -276,8 +294,8 @@ async function runOne(
   agent: Agent,
   rationale: string,
   options: ScheduleOptions,
+  cwd: string | undefined,
 ): Promise<ScheduledTask> {
-  const cwd = options.worktreeFor?.(task.id) ?? options.cwd
 
   // Long builds outlive the default lease TTL. Beating keeps the lease alive
   // while the task is demonstrably still running, so the reaper can safely
@@ -376,16 +394,25 @@ export async function scheduleTasks(
   const maxTasks = options.maxTasks ?? 10
   const maxConcurrent = Math.max(1, options.maxConcurrent ?? 1)
 
-  // Refused rather than silently downgraded. A caller that asked for
-  // concurrency and got sequential execution would conclude the feature works
-  // and never find out why their wall-clock never improved; a caller that gets
-  // concurrency in one checkout would get corrupted attribution instead. Both
-  // are worse than being told.
-  if (maxConcurrent > 1 && !options.worktreeFor && !options.allowSharedCheckout) {
+  // Batch 6.5: concurrency now isolates by default. A wave allocates a real
+  // git worktree per task, so attribution is correct because the filesystem
+  // makes contamination impossible, not because the leases agreed it would be.
+  //
+  // The escape hatch survives for debugging but is no longer reachable by
+  // accident: opting out of worktrees ALSO requires acknowledging the shared
+  // checkout, because that is what opting out actually means.
+  const manageWorktrees = maxConcurrent > 1 && !options.worktreeFor && !options.noWorktrees
+  if (maxConcurrent > 1 && !manageWorktrees && !options.worktreeFor && !options.allowSharedCheckout) {
     throw new SchedulerError(
-      `maxConcurrent=${maxConcurrent} needs isolated checkouts: pass worktreeFor to give each task its own ` +
-        `git worktree, or allowSharedCheckout:true to accept that the adapter will misattribute changed files ` +
-        `between concurrent tasks sharing one checkout.`,
+      `maxConcurrent=${maxConcurrent} with noWorktrees needs allowSharedCheckout:true — running builders ` +
+        `concurrently in one checkout makes the adapter misattribute changed files between them.`,
+    )
+  }
+  const repoRoot = options.cwd
+  if (manageWorktrees && !repoRoot) {
+    throw new SchedulerError(
+      `maxConcurrent=${maxConcurrent} needs options.cwd: worktrees are cut from that checkout, and without ` +
+        `it there is no repository to cut them from.`,
     )
   }
 
@@ -470,16 +497,70 @@ export async function scheduleTasks(
       break
     }
 
-    peakConcurrency = Math.max(peakConcurrency, wave.length)
+    // One base commit for the whole wave. Resolving per task would let a
+    // worktree created after another task committed start from a different
+    // tree, and that task's diff would then contain the other's work — the
+    // contamination this batch exists to remove, reintroduced by a race.
+    const worktrees = new Map<string, Worktree>()
+    if (manageWorktrees && repoRoot) {
+      const stale = await reapOrphanedWorktrees(repoRoot, wave.map((w) => w.task.id))
+      if (stale.reaped.length > 0) {
+        await recordEvent(missionId, 'scheduler.worktrees_reaped', { taskIds: stale.reaped })
+      }
+      const baseCommit = await resolveBaseCommit(repoRoot)
+      for (const { task } of wave) {
+        try {
+          worktrees.set(task.id, await allocateWorktree(task.id, repoRoot, baseCommit))
+        } catch (err) {
+          // A task that could not get an isolated checkout must not silently
+          // fall back to the shared one — that is precisely the corruption
+          // this replaces. Fail the task and let the wave carry on.
+          const error = err instanceof Error ? err.message : String(err)
+          await releaseLeases(task.id).catch(() => {})
+          await updateTaskStatus(task.id, 'failed', { by: 'scheduler', error }).catch(() => {})
+          await recordEvent(missionId, 'scheduler.worktree_failed', { error }, task.id)
+        }
+      }
+    }
+
+    const dispatchable = manageWorktrees
+      ? wave.filter((w) => worktrees.has(w.task.id))
+      : wave
+    for (const { task, agent, rationale } of wave) {
+      if (dispatchable.some((d) => d.task.id === task.id)) continue
+      scheduled.push({
+        task, agent, rationale, executed: false, success: false,
+        finalStatus: 'failed', exitCode: null, durationMs: null,
+        error: 'could not allocate an isolated worktree', validation: null,
+      })
+    }
+    if (dispatchable.length === 0) break
+
+    peakConcurrency = Math.max(peakConcurrency, dispatchable.length)
     await recordEvent(missionId, 'scheduler.wave_dispatched', {
-      concurrency: wave.length,
-      tasks: wave.map((w) => ({ taskId: w.task.id, title: w.task.title, agent: w.agent.name })),
+      concurrency: dispatchable.length,
+      isolation: manageWorktrees ? 'worktree' : options.worktreeFor ? 'caller-supplied' : 'shared-checkout',
+      tasks: dispatchable.map((w) => ({
+        taskId: w.task.id,
+        title: w.task.title,
+        agent: w.agent.name,
+        cwd: worktrees.get(w.task.id)?.path ?? options.worktreeFor?.(w.task.id) ?? options.cwd ?? null,
+      })),
     })
 
     // allSettled, not all: one builder throwing must not abandon the others
-    // mid-run, which would leak their leases until the reaper caught up.
+    // mid-run, which would leak their leases and worktrees until the reapers
+    // caught up.
     const results = await Promise.allSettled(
-      wave.map(({ task, agent, rationale }) => runOne(task, agent, rationale, options)),
+      dispatchable.map(({ task, agent, rationale }) =>
+        runOne(
+          task,
+          agent,
+          rationale,
+          options,
+          worktrees.get(task.id)?.path ?? options.worktreeFor?.(task.id) ?? options.cwd,
+        ),
+      ),
     )
 
     for (let i = 0; i < results.length; i++) {
@@ -490,7 +571,7 @@ export async function scheduleTasks(
       }
       // runOne releases its own lease in a finally, so this is a genuinely
       // unexpected throw; record it as a failed task rather than losing it.
-      const { task, agent, rationale } = wave[i]
+      const { task, agent, rationale } = dispatchable[i]
       const error = settled.reason instanceof Error ? settled.reason.message : String(settled.reason)
       await releaseLeases(task.id).catch(() => {})
       await updateTaskStatus(task.id, 'failed', { by: 'scheduler', error }).catch(() => {})
@@ -498,6 +579,36 @@ export async function scheduleTasks(
         task, agent, rationale, executed: true, success: false,
         finalStatus: 'failed', exitCode: null, durationMs: null, error, validation: null,
       })
+    }
+
+    // Preserve, then release. Mirrors lease release — after the run, whatever
+    // happened — with one addition that is not optional: `git worktree remove
+    // --force` takes uncommitted changes with it, so a task's output has to be
+    // committed to a branch of its own first or isolation would destroy the
+    // very work it protected. What happens to those branches is Batch 7's.
+    if (manageWorktrees && repoRoot) {
+      for (const taskId of worktrees.keys()) {
+        try {
+          const kept = await preserveWorktree(taskId, repoRoot)
+          if (kept.commit) {
+            await recordEvent(
+              missionId,
+              'scheduler.work_preserved',
+              { branch: kept.branch, commit: kept.commit, files: kept.files },
+              taskId,
+            )
+          }
+        } catch (err) {
+          // Losing the work silently is the one outcome worth shouting about.
+          await recordEvent(
+            missionId,
+            'scheduler.work_lost',
+            { error: err instanceof Error ? err.message : String(err) },
+            taskId,
+          )
+        }
+        await releaseWorktree(taskId, repoRoot).catch(() => {})
+      }
     }
   }
 
