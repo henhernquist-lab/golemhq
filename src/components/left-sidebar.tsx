@@ -3,7 +3,7 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { useState } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import {
   MessageSquarePlus,
   MessageSquare,
@@ -51,15 +51,18 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: '/', icon: Home, label: 'Home', desc: 'Dashboard overview' },
       { href: '/chat', icon: MessageSquare, label: 'Chat', desc: 'Ask Golem anything' },
-      { href: '/agency', icon: Network, label: 'Agency', desc: 'Org chart, pause/resume, live activity' },
       { href: '/usage', icon: BarChart3, label: 'Usage', desc: 'Track tokens, cost, and alerts' },
     ],
   },
   {
+    // Batch 8.5: Forge, Missions, and Agency are one tabbed workspace now
+    // (see src/app/forge/page.tsx's `primaryTab`) — these three entries all
+    // deep-link into it via `?tab=`, they no longer visit separate pages.
     title: 'Workspace',
     items: [
-      { href: '/missions', icon: ListTree, label: 'Missions', desc: 'Mission, task and agent state' },
-      { href: '/forge', icon: Swords, label: 'The Forge', desc: 'Autonomous coding agent' },
+      { href: '/forge', icon: Swords, label: 'The Forge', desc: 'Coding agent, missions, and agency — one workspace' },
+      { href: '/forge?tab=missions', icon: ListTree, label: 'Missions', desc: 'The real mission spine — tasks, roster, evidence' },
+      { href: '/forge?tab=agency', icon: Network, label: 'Agency', desc: 'Org chart, pause/resume, real functional audits' },
       { href: '/scribe', icon: Wand2, label: 'Prompt Engineer', desc: 'Prompt engineering lab' },
       { href: '/lab', icon: FlaskConical, label: 'Lab', desc: 'Experiments and overnight runs' },
     ],
@@ -130,6 +133,19 @@ export function LeftSidebar({
   onDeleteConversation,
 }: LeftSidebarProps) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  // Batch 8.5: /forge, /forge?tab=missions, /forge?tab=agency all share one
+  // path — pathname alone can't tell them apart, so active-state matching
+  // also has to compare the `tab` query param (absent == 'forge', the
+  // workspace's default tab).
+  const isNavItemActive = (href: string): boolean => {
+    const [hrefPath, hrefQuery] = href.split('?')
+    if (pathname !== hrefPath) return false
+    const hrefTab = new URLSearchParams(hrefQuery ?? '').get('tab') ?? 'forge'
+    const currentTab = pathname === '/forge' ? (searchParams.get('tab') ?? 'forge') : 'forge'
+    return hrefPath !== '/forge' || hrefTab === currentTab
+  }
 
   const [createRepoOpen, setCreateRepoOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
@@ -163,7 +179,7 @@ export function LeftSidebar({
               </h3>
               <div className="space-y-0.5">
                 {section.items.map((item) => {
-                  const isActive = pathname === item.href
+                  const isActive = isNavItemActive(item.href)
                   if (item.href === '#') {
                     return (
                       <button
@@ -209,7 +225,7 @@ export function LeftSidebar({
               >
                 <div className="mt-2 space-y-0.5">
                   {MORE_SECTION.items.map((item) => (
-                    <NavLink key={item.href} item={item} isActive={pathname === item.href} />
+                    <NavLink key={item.href} item={item} isActive={isNavItemActive(item.href)} />
                   ))}
                 </div>
               </motion.div>

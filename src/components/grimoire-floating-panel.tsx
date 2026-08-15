@@ -20,7 +20,26 @@ export function GrimoireFloatingPanel() {
   const [committing, setCommitting] = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const toggleRef = useRef<HTMLButtonElement>(null)
   const detectedUrls = useMemo(() => extractUrls(content), [content])
+
+  // Non-modal: no backdrop to block the rest of the app, so closing on an
+  // outside click needs its own listener, scoped to the panel ref — the same
+  // pattern the sidebar's demoted-nav dropdown uses. The toggle button is
+  // excluded too, or a click on it while open would close via this handler
+  // and immediately reopen via its own onClick.
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (panelRef.current?.contains(target)) return
+      if (toggleRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
 
   // Load draft when opening
   useEffect(() => {
@@ -117,6 +136,7 @@ export function GrimoireFloatingPanel() {
     <>
       {/* Toggle button — fixed position, bottom-right */}
       <button
+        ref={toggleRef}
         onClick={() => setOpen((prev) => !prev)}
         className="fixed bottom-5 right-5 z-50 flex h-10 w-10 items-center justify-center rounded-full border border-primary/30 bg-surface-secondary shadow-lg transition-all hover:border-primary/50 hover:bg-surface-elevated hover:shadow-xl"
         aria-label={open ? 'Close The Grimoire' : 'Open The Grimoire'}
@@ -124,28 +144,18 @@ export function GrimoireFloatingPanel() {
         <StickyNote className="h-4 w-4 text-primary" />
       </button>
 
-      {/* Floating panel */}
+      {/* Floating panel — non-modal by design: no backdrop, so the rest of
+          the app stays visible and usable while notes are open. */}
       <AnimatePresence>
         {open && (
-          <>
-            {/* Backdrop */}
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm"
-              onClick={() => setOpen(false)}
-            />
-
-            {/* Panel */}
-            <motion.div
-              initial={{ opacity: 0, y: 20, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 20, scale: 0.97 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="fixed bottom-16 right-5 z-50 w-[380px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface-secondary shadow-2xl"
-            >
+          <motion.div
+            ref={panelRef}
+            initial={{ opacity: 0, y: 20, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.97 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="fixed bottom-16 right-5 z-50 w-[380px] max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-surface-secondary shadow-2xl"
+          >
               {/* Header */}
               <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
                 <div className="flex items-center gap-2">
@@ -237,8 +247,7 @@ export function GrimoireFloatingPanel() {
                   </div>
                 </div>
               )}
-            </motion.div>
-          </>
+          </motion.div>
         )}
       </AnimatePresence>
     </>

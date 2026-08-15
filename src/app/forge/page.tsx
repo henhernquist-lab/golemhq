@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
 import {
   ArrowLeft, ChevronDown, ChevronRight, Check, X, Send, Loader2,
   GitBranch, Folder, File, Lock, Sliders, Zap, TerminalSquare, Eye, Play,
-  Swords, FileText, Pencil, Brain, Globe, Plus, MessageSquare,
+  Swords, FileText, Pencil, Brain, Globe, Plus, MessageSquare, ListTree, Network,
 } from 'lucide-react'
-import { MissionsPanel } from '@/components/agent/missions-panel'
+import { MissionsWorkspace } from '@/components/missions/missions-workspace'
+import { AgencyWorkspace } from '@/components/agency/agency-workspace'
 import { DriveTerminalWorkspace, type DriveTerminalWorkspaceHandle } from '@/components/terminal/drive-terminal-workspace'
 import { SkillFeedbackBar } from '@/components/skill-feedback-bar'
 import { ThinkingTrace } from '@/components/thinking-trace'
@@ -296,19 +297,41 @@ export default function AgentPage() {
   // the transient UI; the transcript system-line remains the permanent record.
   const [lastRoutingDecision, setLastRoutingDecision] = useState<RoutingDecision | null>(null)
   const [routerExpanded, setRouterExpanded] = useState(false)
-  // Workspace mode: 'chat' (conversation only) vs 'missions' (read-only
-  // mission/task list) vs 'command' (IDE terminals only). All three stay
-  // mounted so each view preserves its state across switches.
-  const [workspaceMode, setWorkspaceMode] = useState<'chat' | 'missions' | 'command'>(
+  // Workspace mode: 'chat' (conversation only) vs 'command' (IDE terminals
+  // only). Both stay mounted so each view preserves its state across
+  // switches. Batch 8.5 moved Missions out of here — it used to be the
+  // Cruise-flavored scan-and-fix history (see the removed
+  // src/components/agent/missions-panel.tsx), which is now the real mission
+  // spine one level up, as its own `primaryTab` alongside Forge and Agency.
+  const [workspaceMode, setWorkspaceMode] = useState<'chat' | 'command'>(
     () => {
       if (typeof window === 'undefined') return 'chat'
       const saved = localStorage.getItem('golem.drive.mode')
-      return saved === 'missions' || saved === 'command' ? saved : 'chat'
+      return saved === 'command' ? saved : 'chat'
     },
   )
   useEffect(() => {
     try { localStorage.setItem('golem.drive.mode', workspaceMode) } catch { /* optional */ }
   }, [workspaceMode])
+
+  // Batch 8.5: the unified workspace shell — Forge / Missions (real spine) /
+  // Agency (org chart) as one tabbed page instead of three separate routes.
+  // All three stay mounted (CSS-hidden, not unmounted) for the same reason
+  // workspaceMode above does: switching tabs must not lose Forge's live
+  // terminal sessions or chat state.
+  const searchParams = useSearchParams()
+  const [primaryTab, setPrimaryTab] = useState<'forge' | 'missions' | 'agency'>(
+    () => {
+      const fromQuery = searchParams.get('tab')
+      if (fromQuery === 'missions' || fromQuery === 'agency' || fromQuery === 'forge') return fromQuery
+      if (typeof window === 'undefined') return 'forge'
+      const saved = localStorage.getItem('golem.workspace.tab')
+      return saved === 'missions' || saved === 'agency' ? saved : 'forge'
+    },
+  )
+  useEffect(() => {
+    try { localStorage.setItem('golem.workspace.tab', primaryTab) } catch { /* optional */ }
+  }, [primaryTab])
   const [lines, setLines] = useState<ChatLine[]>([
     { kind: 'system', text: 'coding agent \u2014 select a repository to begin.' },
   ])
@@ -1046,6 +1069,34 @@ USER REQUEST: ${userText}`
 
   return (
     <div className="flex h-screen flex-col bg-background font-sans">
+      {/* Unified workspace switcher (Batch 8.5) — Forge / Missions (real
+          spine) / Agency (org chart) as one tabbed page. Sits above Forge's
+          own Chat/Terminals switcher below, which is a sub-mode of the Forge
+          tab specifically, not a sibling of Missions/Agency anymore. */}
+      <div className="flex h-9 flex-shrink-0 items-center gap-0.5 border-b border-border bg-surface-secondary px-3">
+        <button onClick={() => setPrimaryTab('forge')}
+          className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] transition-colors ${
+            primaryTab === 'forge' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+          }`}>
+          <Swords className="h-3 w-3" /> Forge
+        </button>
+        <button onClick={() => setPrimaryTab('missions')}
+          className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] transition-colors ${
+            primaryTab === 'missions' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+          }`}
+          title="The real mission spine — missions, task graph, agent roster">
+          <ListTree className="h-3 w-3" /> Missions
+        </button>
+        <button onClick={() => setPrimaryTab('agency')}
+          className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] transition-colors ${
+            primaryTab === 'agency' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+          }`}
+          title="Org chart, pause/resume, real functional audits">
+          <Network className="h-3 w-3" /> Agency
+        </button>
+      </div>
+
+      <div className={`flex min-h-0 flex-1 flex-col ${primaryTab === 'forge' ? '' : 'hidden'}`}>
       {/* Top bar */}
       <header className="flex h-10 flex-shrink-0 items-center gap-3 border-b border-border bg-background px-4">
         <Link href="/" className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground">
@@ -1054,7 +1105,7 @@ USER REQUEST: ${userText}`
 
         <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50">Coding Agent</span>
 
-        {/* Chat / Missions / Terminals workspace switcher — fully separate workspaces */}
+        {/* Chat / Terminals workspace switcher — fully separate workspaces */}
         <div className="flex items-center gap-0.5 rounded border border-border bg-surface-secondary p-0.5">
           <button onClick={() => setWorkspaceMode('chat')}
             className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
@@ -1062,13 +1113,6 @@ USER REQUEST: ${userText}`
             }`}
             title="Chat workspace — conversation, model, skills (no terminals)">
             <MessageSquare className="h-3 w-3" /> Chat
-          </button>
-          <button onClick={() => setWorkspaceMode('missions')}
-            className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
-              workspaceMode === 'missions' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
-            }`}
-            title="Missions — read-only run history and task list">
-            <Swords className="h-3 w-3" /> Missions
           </button>
           <button onClick={() => setWorkspaceMode('command')}
             className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
@@ -1776,15 +1820,22 @@ USER REQUEST: ${userText}`
           </div>
         </div>
         </div>
-          {/* Missions workspace: read-only run history + task list. */}
-          <div className={`min-h-0 min-w-0 flex-1 ${workspaceMode === 'missions' ? 'flex' : 'hidden'}`}>
-            <MissionsPanel repo={repo} onChat={() => setWorkspaceMode('chat')} />
-          </div>
           {/* Command workspace: full IDE — terminals only, no chat. */}
           <div className={`min-h-0 min-w-0 flex-1 ${workspaceMode === 'command' ? 'flex' : 'hidden'}`}>
             <DriveTerminalWorkspace ref={terminalWorkspaceRef} onCountChange={setTerminalCount} />
           </div>
         </div>
+      </div>
+      </div>
+
+      {/* Missions tab: the real mission spine, embedded (Batch 8.5). */}
+      <div className={`min-h-0 flex-1 overflow-y-auto ${primaryTab === 'missions' ? '' : 'hidden'}`}>
+        <MissionsWorkspace embedded />
+      </div>
+
+      {/* Agency tab: org chart / roster / real functional audits (Batch 8.5). */}
+      <div className={`min-h-0 flex-1 overflow-y-auto ${primaryTab === 'agency' ? '' : 'hidden'}`}>
+        <AgencyWorkspace embedded />
       </div>
     </div>
   )
