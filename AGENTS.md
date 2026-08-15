@@ -105,6 +105,12 @@ node_modules is symlinked into each worktree — validators run `npx --no-instal
 `git worktree remove --force` takes uncommitted changes with it, so a task's output is committed to `golem/task/<id>` BEFORE the worktree is released. Isolating work and then deleting it is worse than not isolating it. What merges those branches is the approval gate's call, not the scheduler's.
 runHeadless frames every command as `cd <cwd> 2>/dev/null; ...` — a failed cd is SWALLOWED and the command runs in the previous directory. Anything that depends on cwd for isolation must verify the directory exists rather than trusting the cd.
 
+Approval is a MERGE problem, not a status flip (Batch 7, approval.ts). Since 6.5 a finished wave is a fan-out of `golem/task/<id>` branches. Leases prevent two tasks writing the same FILE; they say nothing about two tasks writing adjacent LINES, so merge conflicts between task branches are normal, not exceptional. They are surfaced as blocking, never auto-resolved.
+Merging is atomic. Every branch merges onto a throwaway detached worktree cut from the target; the target ref only moves — via `update-ref` with the old value as a guard — if all of them land. A conflict on branch 3 of 5 leaves the target untouched. Half a wave on the target is the state with no correct description.
+Rejected branches are KEPT. Since 6.5 the branch is the only copy of a task's output, so deleting on reject makes one click irreversible. `purgeRejectedBranches` is the explicit reclaim. Approved branches ARE deleted after landing — their commits stay reachable from the merge commits.
+Worktree reaping never touches branches. Proven, with a control: `git worktree remove --force` + `prune` leaves the ref and its content intact, so work can sit awaiting review long past its worktree's TTL.
+The PTY expands tabs to spaces. `git diff --numstat` writes `1\t0\tg.txt` and arrives through runHeadless as `1       0       g.txt`. A tab-anchored parser matches nothing and every diff silently reads as empty. Parse tab-delimited git output with `\s+`.
+
 6. Orchestration (missions / agents)
 
 Three layers: L1 orchestrators (plan/schedule/coordinate, never write code) → L2 builders (each bound to a specific CLI) → L3 validators.
