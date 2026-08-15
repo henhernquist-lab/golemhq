@@ -1,17 +1,17 @@
 import { test, expect } from 'playwright/test'
 
 /**
- * Why "opencodeopencode" survives the b8a33a0 fix.
+ * Why "opencodeopencode" survived the b8a33a0 fix, and what now clears it.
  *
- * The fix stops the name from being BUILT wrongly. It does nothing about a
- * wrong name that is already persisted — records, including `name`, are
- * written to localStorage and restored verbatim, and the reconnect probe
- * carries the name across onto a brand new PTY. Worse, the fix made the name
- * stickier: a line the reconstruction cannot model (history recall with the up
- * arrow — the obvious way to relaunch a CLI) is now deliberately NOT used for
- * naming, so nothing overwrites the stale label.
+ * b8a33a0 stops the name from being BUILT wrongly. It did nothing about a
+ * wrong name already persisted — records, including `name`, are written to
+ * localStorage and restored verbatim, and the reconnect probe carries the name
+ * onto a brand new PTY. It also made the name stickier: a line the
+ * reconstruction cannot model (history recall, a paste, a mid-line edit) is
+ * deliberately NOT used for naming, so nothing overwrote the stale label.
  *
- * Throwaway: evidence, not a guard.
+ * The OSC 0/2 title closes it. This test starts from a poisoned workspace and
+ * asserts nothing — it prints, so the correction is visible as a sequence.
  */
 const EMAIL = process.env.E2E_EMAIL
 const PASSWORD = process.env.E2E_PASSWORD
@@ -32,7 +32,7 @@ test.describe('terminal name persistence', () => {
   test.skip(!EMAIL || !PASSWORD, 'needs E2E credentials')
   test.setTimeout(240_000)
 
-  test('a stale bad name survives onto a fresh PTY and is never corrected', async ({ page }) => {
+  test('a stale bad name carries onto a fresh PTY, then the OSC title clears it', async ({ page }) => {
     await login(page)
 
     // Exactly what a workspace saved before the fix looks like. The id is
@@ -75,11 +75,12 @@ test.describe('terminal name persistence', () => {
     // Launch with a mid-line edit, so the keystroke reconstruction refuses to
     // name it and only an OSC title can. This is the case that used to leave
     // the poisoned name on screen forever.
-    await page.keyboard.type('opencodX')
-    await page.keyboard.press('Backspace')
+    await page.keyboard.type('opencode')
+    // Net-zero cursor move: the command really is `opencode`, but the
+    // keystroke reconstruction has seen escape sequences and will refuse to
+    // name from it. Only an OSC title can fix the tab now.
     await page.keyboard.press('ArrowLeft')
     await page.keyboard.press('ArrowRight')
-    await page.keyboard.type('e')
     await page.keyboard.press('Enter')
     await page.waitForTimeout(16_000)
     console.log('TABS_AFTER_HISTORY_RELAUNCH=' + JSON.stringify(await tabNames()))
