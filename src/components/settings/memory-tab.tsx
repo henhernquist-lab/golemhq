@@ -246,7 +246,7 @@ function MemoryRow({
 
 // ─── Quick add (from the old two-textarea /resources/memory page) ─────────
 
-function QuickAdd({ onSaved }: { onSaved: (m: MemoryResource) => void }) {
+function QuickAdd({ onSaved, onRecall }: { onSaved: (m: MemoryResource) => void; onRecall: (recall: unknown) => void }) {
   const [memoryInput, setMemoryInput] = useState('')
   const [commPrefs, setCommPrefs] = useState('')
   const [saving, setSaving] = useState<'memory' | 'preference' | null>(null)
@@ -265,6 +265,7 @@ function QuickAdd({ onSaved }: { onSaved: (m: MemoryResource) => void }) {
       const data = await res.json()
       if (res.ok) {
         onSaved(data.memory as MemoryResource)
+        onRecall(data.recall)
         if (kind === 'memory') setMemoryInput(''); else setCommPrefs('')
       }
     } finally {
@@ -308,6 +309,15 @@ export function MemoryTab() {
   const [error, setError] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   const [scanResult, setScanResult] = useState<string | null>(null)
+  // A fact can be saved here and still not be recallable in chat: the resource
+  // row is the source of truth, but chat's semantic recall reads the separate
+  // pgvector `memories` table. Say so rather than implying the fact is live.
+  const [recallWarning, setRecallWarning] = useState<string | null>(null)
+
+  const noteRecall = useCallback((recall: unknown) => {
+    const r = recall as { ok?: boolean; error?: string } | undefined
+    setRecallWarning(r && r.ok === false ? `Saved, but not added to chat recall: ${r.error ?? 'unknown error'}` : null)
+  }, [])
 
   const load = useCallback(() => {
     setLoading(true)
@@ -367,8 +377,9 @@ export function MemoryTab() {
     })
     if (!res.ok) { setError('Could not accept fact.'); return }
     const data = await res.json()
+    noteRecall(data.recall)
     setMemories((prev) => prev.map((item) => item.id === memory.id ? (data.memory as MemoryResource) : item))
-  }, [])
+  }, [noteRecall])
 
   const scanLab = useCallback(async () => {
     setScanning(true)
@@ -427,8 +438,13 @@ export function MemoryTab() {
           <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" /> {error}
         </div>
       )}
+      {recallWarning && (
+        <div className="mb-3 flex items-center gap-2 rounded border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+          <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" /> {recallWarning}
+        </div>
+      )}
 
-      <QuickAdd onSaved={handleSaved} />
+      <QuickAdd onSaved={handleSaved} onRecall={noteRecall} />
 
       <div className="relative mb-4">
         <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />

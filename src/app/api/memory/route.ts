@@ -12,6 +12,33 @@ function userId(session: { user?: { id?: string } } | null): string | null {
   return (session?.user as { id?: string } | undefined)?.id ?? null
 }
 
+/**
+ * Mirror an accepted fact into the legacy `memories` table — the pgvector store
+ * chat's recall actually searches. Never throws: the `resources` row is the
+ * source of truth, so a mirror failure degrades recall rather than losing the
+ * fact. The outcome is returned so the UI can say so out loud instead of
+ * claiming a fact is live when it isn't.
+ *
+ * Known live failure: the deployed `memories.embedding` column is still
+ * vector(1536) from the pre-bge-m3 model era while embeddings are now 1024
+ * dims, so every insert fails with "expected 1536 dimensions, not 1024" until
+ * supabase/migrations/20260816000000_memories_embedding_dims.sql is applied.
+ */
+async function mirrorToRecallStore(rawUserId: string, content: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const result = await saveMemory(rawUserId, content)
+    if (result.error) {
+      console.error('[memory] recall-store mirror failed:', result.error)
+      return { ok: false, error: result.error }
+    }
+    return { ok: true }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'mirror failed'
+    console.error('[memory] recall-store mirror threw:', message)
+    return { ok: false, error: message }
+  }
+}
+
 // Memories are stored as rows in `resources` with type='memory'. source is
 // always 'user' (Golem-captured or imported by Henry). An `imported` flag in the
 // payload marks entries pasted from another AI so the UI can badge them.
@@ -79,16 +106,14 @@ export async function POST(req: Request) {
   // A manually-entered or imported fact is already reviewed by definition —
   // Henry typed or pasted it himself — so unlike an auto-captured pending
   // fact, it's safe to mirror into the legacy `memories` table (the
-  // pgvector-searched store chat actually recalls from) immediately. Best
-  // effort: the resource row is the source of truth and already saved.
+  // pgvector-searched store chat actually recalls from) immediately. The
+  // resource row is the source of truth and is already saved either way, but
+  // the mirror's outcome is reported so the UI can say when a fact is stored
+  // yet not actually recallable.
   const rawUserId = userId(session)
-  if (rawUserId) {
-    saveMemory(rawUserId, text).then((result) => {
-      if (result.error) console.error('[memory] recall-store mirror failed:', result.error)
-    })
-  }
+  const recall = rawUserId ? await mirrorToRecallStore(rawUserId, text) : { ok: false, error: 'no session id' }
 
-  return Response.json({ memory: data })
+  return Response.json({ memory: data, recall })
 }
 
 // Review actions on an auto-captured pending fact. Accept marks it reviewed
@@ -129,14 +154,13 @@ export async function PATCH(req: Request) {
   if (error) return Response.json({ error: 'Failed to accept' }, { status: 500 })
 
   const rawUserId = userId(session)
-  if (rawUserId && typeof payload.content === 'string') {
-    saveMemory(rawUserId, payload.content).then((result) => {
-      if (result.error) console.error('[memory] recall-store mirror failed on accept:', result.error)
-    })
-  }
+  const recall =
+    rawUserId && typeof payload.content === 'string'
+      ? await mirrorToRecallStore(rawUserId, payload.content)
+      : { ok: false, error: 'nothing to mirror' }
 
   emitResourceSaved()
-  return Response.json({ memory: data })
+  return Response.json({ memory: data, recall })
 }
 
 export async function DELETE(req: Request) {

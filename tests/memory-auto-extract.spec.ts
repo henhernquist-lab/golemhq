@@ -14,6 +14,14 @@ import { test, expect } from 'playwright/test'
 const EMAIL = process.env.E2E_EMAIL
 const PASSWORD = process.env.E2E_PASSWORD
 
+// Nothing here touches WebGL, and the config's swiftshader GPU process is the
+// first thing the OOM killer takes when other work is running on this box —
+// which surfaces as "GPU process isn't usable. Goodbye." rather than as
+// anything about the test. No GPU process, nothing to lose.
+test.use({
+  launchOptions: { args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-gpu'] },
+})
+
 test.describe('memory auto-extract', () => {
   test.skip(!EMAIL || !PASSWORD, 'Set E2E_EMAIL and E2E_PASSWORD to run this test.')
 
@@ -38,11 +46,11 @@ test.describe('memory auto-extract', () => {
     const res = await page.request.post('/api/chat', {
       data: {
         messages: [
-          { role: 'user', content: 'What is 2+2? Answer in one word.' },
-          { role: 'assistant', content: 'Four.' },
-          { role: 'user', content: 'What is the capital of France? Answer in one word.' },
-          { role: 'assistant', content: 'Paris.' },
-          { role: 'user', content: `Just so you know, for this test my callsign is ${marker} and I always want you to remember it as a durable fact about me.` },
+          { role: 'user', content: `I run a long-term side project called ${marker} — a self-hosted telemetry dashboard I maintain on weekends.` },
+          { role: 'assistant', content: 'Got it.' },
+          { role: 'user', content: `For ${marker} I always deploy to Fly.io rather than Vercel, because it needs a long-lived process.` },
+          { role: 'assistant', content: 'Understood.' },
+          { role: 'user', content: `Whenever I ask about ${marker}, assume Postgres and Grafana — that stack is fixed and will not change.` },
         ],
         model: 'z-ai/glm-5.2',
       },
