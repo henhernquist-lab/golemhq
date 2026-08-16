@@ -33,8 +33,13 @@ import { AgentChatPanel } from '@/components/missions/agent-chat-panel'
 import { WorkspaceShell } from '@/components/workspace/workspace-shell'
 import { StatusBadge, type BadgeTone } from '@/components/workspace/status-badge'
 import { AGENT_LAYER_LABELS, AGENT_LAYERS, type Agent, type AgentLayer } from '@/lib/missions/types'
+import { listModels } from '@/lib/nim'
 
 const POLL_MS = 6000
+
+// Client-safe registry read — listModels() is pure (scope filter only, no env
+// reads), so this mirrors the chat picker's lineup without touching keys.
+const MODEL_OPTIONS = listModels('chat')
 
 type AuditStatus = 'working' | 'broken' | 'absent' | 'not_applicable'
 
@@ -47,6 +52,8 @@ interface AuditView {
 interface AgencyAgent extends Agent {
   detection: { cliPath: string | null; cliVersion: string | null; detectedAt: string | null; detectedHost: string | null } | null
   instructions: string | null
+  /** Registry model id Henry assigned, or null = CLI's own default. */
+  model: string | null
   audit: AuditView | null
 }
 
@@ -106,7 +113,7 @@ function AuditBadge({ agent, busy, onRun }: { agent: AgencyAgent; busy: boolean;
 }
 
 function AgentCard({
-  agent, auditing, onToggleEnabled, onEdit, onChat, onAudit,
+  agent, auditing, onToggleEnabled, onEdit, onChat, onAudit, onChangeModel,
 }: {
   agent: AgencyAgent
   auditing: boolean
@@ -114,6 +121,7 @@ function AgentCard({
   onEdit: () => void
   onChat: () => void
   onAudit: () => void
+  onChangeModel: (model: string | null) => void
 }) {
   return (
     <div className="w-64 rounded-lg border border-border bg-surface-secondary p-3">
@@ -151,6 +159,33 @@ function AgentCard({
           {agent.detection.cliPath ? `detected on ${agent.detection.detectedHost}` : `absent on ${agent.detection.detectedHost}`}
         </p>
       )}
+
+      <div className="mt-2">
+        <label className="flex flex-col gap-1">
+          <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">model</span>
+          {agent.layer === 2 && agent.cliCommand ? (
+            <select
+              value={agent.model ?? ''}
+              onChange={(e) => onChangeModel(e.target.value || null)}
+              className="w-full rounded border border-border bg-surface-base px-1.5 py-1 font-mono text-[10px] text-foreground outline-none focus:border-primary/50"
+            >
+              <option value="">CLI default</option>
+              {MODEL_OPTIONS.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          ) : (
+            <select
+              disabled
+              value=""
+              title="Logic modules don't run a CLI, so there is no model to assign"
+              className="w-full cursor-not-allowed rounded border border-border bg-surface-base px-1.5 py-1 font-mono text-[10px] text-muted-foreground/50 outline-none"
+            >
+              <option value="">logic · no CLI</option>
+            </select>
+          )}
+        </label>
+      </div>
 
       <div className="mt-2.5 flex items-center gap-3 border-t border-border/60 pt-2">
         {agent.cliCommand && (
@@ -232,6 +267,23 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
     } catch (err) {
       setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, enabled: agent.enabled } : a)))
       setError(err instanceof Error ? err.message : 'failed to update agent')
+    }
+  }
+
+  const changeModel = async (agent: AgencyAgent, model: string | null) => {
+    // Optimistic, same shape as toggleEnabled: the card reads live off state.
+    const previous = agent.model
+    setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, model } : a)))
+    try {
+      const res = await fetch(`/api/missions/agents/${agent.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error ?? `HTTP ${res.status}`)
+    } catch (err) {
+      setAgents((prev) => prev.map((a) => (a.id === agent.id ? { ...a, model: previous } : a)))
+      setError(err instanceof Error ? err.message : 'failed to update model')
     }
   }
 
@@ -322,6 +374,7 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
                           setHiring(false); setEditing(null)
                           setChatAgent({ id: a.id, name: a.name, cliCommand: a.cliCommand })
                         }}
+                        onChangeModel={(m) => changeModel(a, m)}
                       />
                     ))}
                   </div>
