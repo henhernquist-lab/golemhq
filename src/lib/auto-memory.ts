@@ -1,6 +1,5 @@
 import { generateText } from 'ai'
 import { supabase } from './supabase'
-import { saveMemory } from './memory'
 import { nimClientFor, DEFAULT_MODEL_ID, parseJsonLoose } from './nim'
 import { emitResourceSaved } from './resource-events'
 
@@ -39,7 +38,10 @@ function isUsefulFact(value: unknown): value is string {
  */
 export async function extractAndSaveAutoMemories(
   resourceUserId: string,
-  googleId: string,
+  // Kept for call-site compatibility (src/app/api/chat/route.ts already
+  // resolves it) even though it's unused here now — see the mirror-on-accept
+  // note below for why.
+  _googleId: string,
   messages: unknown[],
 ): Promise<void> {
   const userMessages = messages
@@ -97,6 +99,7 @@ export async function extractAndSaveAutoMemories(
         content,
         autoCaptured: true,
         reviewState: 'pending' as const,
+        activityCategory: 'chat' as const,
       },
     }))
 
@@ -107,17 +110,14 @@ export async function extractAndSaveAutoMemories(
     }
     emitResourceSaved()
 
-    // The app currently has two historical memory stores: resources powers
-    // the review screen, while recall_memory searches the legacy memories
-    // table. Mirror accepted candidates into both so an auto-captured fact is
-    // visible to the user and available to future chats. A legacy write
-    // failure is non-fatal because the reviewable resource already exists.
-    if (googleId) {
-      await Promise.all(newFacts.map(async (fact) => {
-        const result = await saveMemory(googleId, fact)
-        if (result.error) console.error('[auto-memory] recall-store insert failed:', result.error)
-      }))
-    }
+    // Deliberately NOT mirrored into the legacy `memories` table (the
+    // pgvector-searched recall store chat actually reads from) here. This
+    // used to happen immediately on insert, which meant an unreviewed
+    // "pending" fact could already be recalled in a future conversation
+    // before Henry ever saw it — exactly the silent-pollution risk a review
+    // gate is supposed to prevent. The mirror now happens in
+    // PATCH /api/memory (action: 'accept'), once a human has actually looked
+    // at it. See src/app/api/memory/route.ts.
   } catch (error) {
     console.error('[auto-memory] extraction skipped:', error)
   }

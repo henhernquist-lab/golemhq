@@ -10,7 +10,6 @@ enry lite is the stripped-down mobile companion for enry.agent, living at the `/
 
 | Feature | Route | Notes |
 |---|---|---|
-| **Chat** | `/m/chat` | SSE streaming via existing `/api/chat`. Model picker as bottom sheet. Conversation history as bottom sheet. |
 | **Inbox** | `/m/inbox` | Alert/notification feed. Expandable items with deep-links to desktop. Pull-to-refresh. |
 | **Status** | `/m/status` | Cron job health — one card per job, green/yellow/red, expand for last-run output, "Run now" per job. |
 | **Tools** | `/m/tools` | Web search (Tavily), memory search (pgvector recall), GitHub quick-check. "More tools" sheet lists desktop-only tools. |
@@ -33,7 +32,7 @@ If a user needs these, each excluded tool shows an "Open on desktop" note rather
 ## Architecture decisions
 
 - **Same Next.js app.** No separate deploy, no duplicate auth. `/m` is just another route group.
-- **Same API routes.** Chat reuses `/api/chat` directly — same SSE streaming, same tools, same focus modes.
+- **Same API routes.** Tools reuse `/api/chat` directly for model-backed lookups.
 - **NextAuth v5 session.** `/m/layout.tsx` calls `auth()` and redirects to `/login` if unauthenticated.
 - **dvh units everywhere.** `h-dvh` instead of `h-screen` so the mobile keyboard doesn't push content offscreen.
 - **safe-area-inset.** Bottom tab bar and headers respect `env(safe-area-inset-bottom)` and `env(safe-area-inset-top)` for notched devices.
@@ -45,7 +44,7 @@ If a user needs these, each excluded tool shows an "Open on desktop" note rather
 
 | Component | Path | Purpose |
 |---|---|---|
-| `MobileNav` | `src/components/mobile/MobileNav.tsx` | Fixed bottom tab bar — Chat · Inbox · Status · Tools. Supports unread badges. |
+| `MobileNav` | `src/components/mobile/MobileNav.tsx` | Fixed bottom tab bar — Inbox · Status · Tools. Supports unread badges. |
 | `BottomSheet` | `src/components/mobile/BottomSheet.tsx` | Reusable spring-animated sheet. Accepts `open`, `onClose`, `title`, `children`, `height`. |
 
 ## PWA

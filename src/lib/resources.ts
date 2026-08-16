@@ -161,9 +161,16 @@ export interface MemoryPayload {
   content: string
   imported?: boolean
   origin?: string
-  /** Set for facts extracted from a completed chat and awaiting review. */
+  /** Set for facts extracted from real activity and awaiting review. */
   autoCaptured?: boolean
   reviewState?: 'pending' | 'reviewed'
+  /**
+   * Which activity this fact was extracted from. Absent on manually-entered
+   * and imported facts, and on chat-extracted facts written before this field
+   * existed — 'chat' vs undefined-but-autoCaptured are not distinguished
+   * retroactively, only going forward.
+   */
+  activityCategory?: 'chat' | 'lab'
 }
 
 export interface BellSchedulePayload {

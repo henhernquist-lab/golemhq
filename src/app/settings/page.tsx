@@ -1,11 +1,12 @@
 'use client'
 
 import { Suspense, useCallback, useEffect, useState } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { Settings, ArrowLeft, Mail, Loader2, CheckCircle2, AlertTriangle, Link2Off, User, Sliders, Cpu, Puzzle, Search, Globe, Bot, GraduationCap, School, Key, X } from 'lucide-react'
+import { Settings, ArrowLeft, Mail, Loader2, CheckCircle2, AlertTriangle, Link2Off, User, Sliders, Cpu, Puzzle, Search, Globe, Bot, GraduationCap, School, Key, X, Brain } from 'lucide-react'
 import Link from 'next/link'
 import { loadGolemVisible, saveGolemVisible } from '@/lib/golem-mascot'
+import { MemoryTab } from '@/components/settings/memory-tab'
 
 type ComposioToolkit = 'gmail' | 'firecrawl'
 type ConnectionStatus = 'disconnected' | 'pending' | 'connected' | 'error'
@@ -110,6 +111,17 @@ function MascotToggleCard({ delay = 0 }: { delay?: number }) {
   )
 }
 
+function GeneralTab() {
+  return (
+    <div className="space-y-5">
+      <MascotToggleCard delay={0.05} />
+      <SettingsSectionCard icon={User} title="Account" description="Profile details, email, and password management." delay={0.1} />
+      <SettingsSectionCard icon={Sliders} title="Preferences" description="Theme, notifications, default behaviors, and keyboard shortcuts." delay={0.15} />
+      <SettingsSectionCard icon={Cpu} title="AI & Model Settings" description="Default model, effort level, focus mode, and reasoning trace depth." delay={0.2} />
+    </div>
+  )
+}
+
 // Connectors: connect/disconnect cards for Composio-backed tools (Gmail,
 // Firecrawl). Tokens never touch this app — Composio hosts the OAuth
 // consent screen and custodies the resulting credential; this UI only reads/
@@ -197,14 +209,7 @@ function ConnectorsSection() {
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.15 }}
-      className="mt-6"
-    >
-      <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">Connectors</p>
-
+    <div>
       {banner && (
         <div className={`mb-3 flex items-start gap-2 rounded border px-3 py-2 ${banner.ok ? 'border-primary/30 bg-primary/5' : 'border-destructive/40 bg-destructive/10'}`}>
           {banner.ok ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-primary" /> : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-destructive" />}
@@ -281,7 +286,7 @@ function ConnectorsSection() {
       <p className="mt-3 font-mono text-[9px] leading-relaxed text-muted-foreground/70">
         Gmail and Firecrawl use Composio for connection management — credentials never pass through Golem. Web Search is always available and requires no authentication.
       </p>
-    </motion.div>
+    </div>
   )
 }
 
@@ -298,7 +303,6 @@ function SchoolSection() {
   const [icShowForm, setIcShowForm] = useState(false)
   const [banner, setBanner] = useState<{ ok: boolean; text: string } | null>(null)
 
-  // Check connection status on mount and after OAuth redirect
   useEffect(() => {
     fetch('/api/settings/ic-credentials')
       .then((r) => r.json())
@@ -311,7 +315,6 @@ function SchoolSection() {
       .catch(() => {})
   }, [])
 
-  // Handle OAuth callback params
   useEffect(() => {
     const connected = searchParams.get('classroom_connected')
     const err = searchParams.get('classroom_error')
@@ -379,14 +382,7 @@ function SchoolSection() {
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.2 }}
-      className="mt-6"
-    >
-      <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">School</p>
-
+    <div>
       {banner && (
         <div className={`mb-3 flex items-start gap-2 rounded border px-3 py-2 ${banner.ok ? 'border-primary/30 bg-primary/5' : 'border-destructive/40 bg-destructive/10'}`}>
           {banner.ok ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-primary" /> : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-destructive" />}
@@ -480,11 +476,31 @@ function SchoolSection() {
       <p className="mt-3 font-mono text-[9px] leading-relaxed text-muted-foreground/70">
         Each user connects their own school accounts. Credentials are encrypted at rest and never exposed to other users or the client. Golem only reads — no submissions or modifications.
       </p>
-    </motion.div>
+    </div>
   )
 }
 
-export default function SettingsPage() {
+// ── Tabs (Batch: Memory+Settings merge) ─────────────────────────────────────
+// Same pattern as /resources/saved: a TABS array driving role="tab" buttons,
+// active tab synced to a `?tab=` query param via router.replace.
+
+type SettingsTabId = 'general' | 'memory' | 'connectors' | 'school'
+
+const TABS: { id: SettingsTabId; label: string; icon: typeof Settings }[] = [
+  { id: 'general', label: 'General', icon: Sliders },
+  { id: 'memory', label: 'Memory', icon: Brain },
+  { id: 'connectors', label: 'Connectors', icon: Puzzle },
+  { id: 'school', label: 'School', icon: GraduationCap },
+]
+
+function SettingsPageContent() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+
+  const rawTab = searchParams.get('tab')
+  const validTabs = new Set<string>(TABS.map((t) => t.id))
+  const activeTab = (validTabs.has(rawTab ?? '') ? rawTab : 'general') as SettingsTabId
+
   return (
     <div className="relative flex min-h-screen flex-col bg-transparent">
       <div className="pointer-events-none fixed inset-0 z-0">
@@ -509,7 +525,7 @@ export default function SettingsPage() {
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-10"
+          className="mb-6"
         >
           <div className="flex items-center gap-3 mb-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary/30 bg-primary/10">
@@ -517,46 +533,70 @@ export default function SettingsPage() {
             </div>
             <div>
               <h1 className="font-display text-2xl font-bold leading-tight text-foreground">Settings</h1>
-              <p className="font-mono text-xs text-muted-foreground">Manage your account and preferences</p>
+              <p className="font-mono text-xs text-muted-foreground">Account, preferences, connectors, and memory</p>
             </div>
           </div>
         </motion.div>
 
-        <div className="space-y-5">
-          <MascotToggleCard delay={0.05} />
-
-          {/* Placeholder sections — ready for wiring */}
-          <SettingsSectionCard
-            icon={User}
-            title="Account"
-            description="Profile details, email, and password management."
-            delay={0.1}
-          />
-          <SettingsSectionCard
-            icon={Sliders}
-            title="Preferences"
-            description="Theme, notifications, default behaviors, and keyboard shortcuts."
-            delay={0.15}
-          />
-          <SettingsSectionCard
-            icon={Cpu}
-            title="AI & Model Settings"
-            description="Default model, effort level, focus mode, and reasoning trace depth."
-            delay={0.2}
-          />
-          <SettingsSectionCard
-            icon={Puzzle}
-            title="Integrations"
-            description="Composio connectors (Gmail, Firecrawl) and future API integrations."
-            delay={0.25}
-          />
+        <div
+          className="mb-6 flex overflow-x-auto border-b border-border/50 scrollbar-hidden"
+          role="tablist"
+          aria-label="Settings sections"
+          onKeyDown={(e) => {
+            const idx = TABS.findIndex((t) => t.id === activeTab)
+            let next = idx
+            if (e.key === 'ArrowRight') next = (idx + 1) % TABS.length
+            else if (e.key === 'ArrowLeft') next = (idx - 1 + TABS.length) % TABS.length
+            else return
+            e.preventDefault()
+            router.replace(`/settings?tab=${TABS[next].id}`)
+          }}
+        >
+          {TABS.map((tab) => {
+            const Icon = tab.icon
+            const active = activeTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                role="tab"
+                aria-selected={active}
+                tabIndex={active ? 0 : -1}
+                onClick={() => router.replace(`/settings?tab=${tab.id}`)}
+                className={`relative flex flex-shrink-0 items-center gap-1.5 px-4 py-2.5 font-mono text-[11px] whitespace-nowrap transition-colors duration-200 ${
+                  active ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Icon className="h-3 w-3" />
+                {tab.label}
+                {active && (
+                  <motion.div
+                    layoutId="settings-tab-indicator"
+                    className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-primary"
+                    transition={{ type: 'spring', stiffness: 300, damping: 28 }}
+                  />
+                )}
+              </button>
+            )
+          })}
         </div>
 
-        <Suspense fallback={null}>
-          <ConnectorsSection />
-          <SchoolSection />
-        </Suspense>
+        {activeTab === 'general' && <GeneralTab />}
+        {activeTab === 'memory' && <MemoryTab />}
+        {activeTab === 'connectors' && <ConnectorsSection />}
+        {activeTab === 'school' && <SchoolSection />}
       </div>
     </div>
+  )
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    }>
+      <SettingsPageContent />
+    </Suspense>
   )
 }

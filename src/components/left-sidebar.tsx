@@ -62,13 +62,13 @@ const SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: '/resources', icon: Wrench, label: 'Tools', desc: 'Built-in tools and resources' },
       { href: '/prompts', icon: BookMarked, label: 'Prompts', desc: 'Saved prompts and recipes' },
-      { href: '/resources/memory', icon: Brain, label: 'Memory', desc: 'Saved facts and context' },
+      { href: '/settings?tab=memory', icon: Brain, label: 'Memory', desc: 'Manual and auto-captured facts, all in one place' },
     ],
   },
   {
     title: 'System',
     items: [
-      { href: '/settings', icon: Settings, label: 'Settings', desc: 'Account and integrations' },
+      { href: '/settings', icon: Settings, label: 'Settings', desc: 'Account, connectors, school, and memory' },
       { href: '#', icon: GitBranch, label: 'New Repo', desc: 'Create a GitHub repository' },
     ],
   },
@@ -107,16 +107,19 @@ export function LeftSidebar({ agentStatus }: LeftSidebarProps) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
-  // Batch 8.5: /forge, /forge?tab=missions, /forge?tab=agency all share one
-  // path — pathname alone can't tell them apart, so active-state matching
-  // also has to compare the `tab` query param (absent == 'forge', the
-  // workspace's default tab).
+  // Batch 8.5 / Memory+Settings merge: /forge and /settings each host several
+  // nav entries behind one path (?tab=missions, ?tab=agency, ?tab=memory…) —
+  // pathname alone can't tell them apart, so active-state matching also has
+  // to compare the `tab` query param against that path's default tab.
+  const TAB_SCOPED_DEFAULT_TAB: Record<string, string> = { '/forge': 'forge', '/settings': 'general' }
   const isNavItemActive = (href: string): boolean => {
     const [hrefPath, hrefQuery] = href.split('?')
     if (pathname !== hrefPath) return false
-    const hrefTab = new URLSearchParams(hrefQuery ?? '').get('tab') ?? 'forge'
-    const currentTab = pathname === '/forge' ? (searchParams.get('tab') ?? 'forge') : 'forge'
-    return hrefPath !== '/forge' || hrefTab === currentTab
+    const defaultTab = TAB_SCOPED_DEFAULT_TAB[hrefPath]
+    if (!defaultTab) return true
+    const hrefTab = new URLSearchParams(hrefQuery ?? '').get('tab') ?? defaultTab
+    const currentTab = searchParams.get('tab') ?? defaultTab
+    return hrefTab === currentTab
   }
 
   const [createRepoOpen, setCreateRepoOpen] = useState(false)

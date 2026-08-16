@@ -8,7 +8,7 @@ const MODES = [
   { href: '/missions', label: 'Missions', desc: 'Mission, task and agent state', icon: ListTree },
   { href: '/forge', label: 'The Forge', desc: 'Autonomous coding agent', icon: Swords },
   { href: '/scribe', label: 'Prompt Engineer', desc: 'Prompt engineering lab', icon: Wand2 },
-  { href: '/m/chat', label: 'Shard', desc: 'Mobile chat', icon: Smartphone },
+  { href: '/m/status', label: 'Shard', desc: 'Mobile shell', icon: Smartphone },
 ]
 
 export function ModeLauncher() {

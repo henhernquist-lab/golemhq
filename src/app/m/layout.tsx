@@ -5,7 +5,7 @@ import { MobileNav } from '@/components/mobile/MobileNav'
 
 export const metadata: Metadata = {
   title: 'Shard',
-  description: 'Mobile companion for Golem — chat, alerts, and quick actions on the go.',
+  description: 'Mobile companion for Golem — alerts and quick actions on the go.',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,

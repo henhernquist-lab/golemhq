@@ -2,17 +2,16 @@
 
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { MessageCircle, Bell, Activity, Grid3X3 } from 'lucide-react'
+import { Bell, Activity, Grid3X3, type LucideIcon } from 'lucide-react'
 
 interface Tab {
   label: string
   path: string
-  icon: typeof MessageCircle
+  icon: LucideIcon
   badge?: number
 }
 
 const TABS: Tab[] = [
-  { label: 'Chat', path: '/m/chat', icon: MessageCircle },
   { label: 'Inbox', path: '/m/inbox', icon: Bell },
   { label: 'Status', path: '/m/status', icon: Activity },
   { label: 'Tools', path: '/m/tools', icon: Grid3X3 },
@@ -29,7 +28,7 @@ export function MobileNav({ inboxBadge }: { inboxBadge?: number }) {
       <div className="mx-auto flex max-w-lg items-center justify-around">
         {TABS.map((tab) => {
           const Icon = tab.icon
-          const active = pathname === tab.path || (tab.path === '/m/chat' && pathname === '/m')
+          const active = pathname === tab.path
           const badge = tab.label === 'Inbox' ? inboxBadge : tab.badge
           return (
             <Link

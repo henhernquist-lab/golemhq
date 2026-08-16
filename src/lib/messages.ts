@@ -11,10 +11,8 @@
  * framework, and surfaces as a raw HTML 500 — the exact failure mode the
  * client-side guard in `lib/fetch-json` was built to shield users from.
  *
- * The homepage (`center-panel`, `m/chat`) uses `useChat`/`DefaultChatTransport`
- * and sends proper `parts`, so it is unaffected. But the Architect/Scribe UI
- * (`scribe/page.tsx`) and any third-party/legacy caller still send `{role,
- * content}`. Normalize here so both wire shapes work.
+ * The Architect/Scribe UI (`scribe/page.tsx`) and any third-party/legacy
+ * caller send `{role, content}`. Normalize here so both wire shapes work.
  *
  * Returns a new array; never mutates the input. Messages that already have a
  * `parts` array pass through unchanged. Messages with a string `content` are

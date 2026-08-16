@@ -458,7 +458,7 @@ export function getModelMeta(id: string): ModelMeta | undefined {
 // CLIENT-SAFE — must stay pure (scope filter only, no process.env reads).
 //
 // This is imported at module scope by client components ('use client':
-// agent/page.tsx, center-panel.tsx, m/chat/page.tsx). Provider keys are
+// forge/page.tsx). Provider keys are
 // server-only secrets: Next.js inlines just NEXT_PUBLIC_* into the client
 // bundle, so any process.env.*_API_KEY read here is undefined in the browser.
 // A previous version filtered by isModelConfigured() and so returned the full
