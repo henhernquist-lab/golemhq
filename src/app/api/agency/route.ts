@@ -10,7 +10,7 @@
  */
 
 import { auth } from '@/lib/auth'
-import { listMissions, listAgents, getDetections, listAgentInstructions, listRecentEvents } from '@/lib/missions/store'
+import { listMissions, listAgents, getDetections, listAgentInstructions, listAgentModels, listRecentEvents } from '@/lib/missions/store'
 import { CHAT_REPO_PREFIX } from '@/lib/missions/agent-chat'
 import { AUDIT_REPO, latestAuditResults, type AuditResult } from '@/lib/missions/functional-audit'
 import type { AgentDetectionRecord } from '@/lib/missions/store'
@@ -39,6 +39,7 @@ export async function GET() {
     }
 
     const instructions = await listAgentInstructions()
+    const models = await listAgentModels()
 
     let audits = new Map<string, AuditResult>()
     try {
@@ -73,6 +74,7 @@ export async function GET() {
         ...agent,
         detection: detections.get(agent.id) ?? null,
         instructions: instructions.get(agent.id) ?? null,
+        model: models.get(agent.id) ?? null,
         audit: audits.get(agent.id) ?? null,
       })),
       activity,

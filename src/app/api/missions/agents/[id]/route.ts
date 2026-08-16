@@ -42,6 +42,8 @@ interface PatchBody {
   cliCommand?: unknown
   instructions?: unknown
   enabled?: unknown
+  /** Registry model id (src/lib/nim.ts). Null clears back to the CLI's default. */
+  model?: unknown
   /** Run CLI detection right after saving, so the roster stops saying "never checked". */
   detect?: unknown
 }
@@ -68,6 +70,9 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
     patch.instructions = body.instructions as string | null
   }
   if (typeof body.enabled === 'boolean') patch.enabled = body.enabled
+  if (typeof body.model === 'string' || body.model === null) {
+    patch.model = body.model as string | null
+  }
 
   try {
     const existing = await getAgentById(id)

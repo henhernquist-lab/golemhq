@@ -587,6 +587,12 @@ function instructionsColumnMissing(error: { message?: string; code?: string } | 
   return /column .*instructions.* does not exist/i.test(error?.message ?? '') || isTableMissing(error)
 }
 
+const MODEL_MIGRATION = 'supabase/migrations/20260816020000_agent_model.sql'
+
+function modelColumnMissing(error: { message?: string; code?: string } | null): boolean {
+  return /column .*model.* does not exist/i.test(error?.message ?? '') || isTableMissing(error)
+}
+
 /**
  * Standing instructions for one agent, or null.
  *
@@ -622,6 +628,20 @@ export async function listAgentInstructions(): Promise<Map<string, string>> {
   return out
 }
 
+/** Assigned model for every agent (id → model id). Empty map pre-migration. */
+export async function listAgentModels(): Promise<Map<string, string>> {
+  const { data, error } = await supabase.from('agents').select('id, model')
+  if (error) {
+    if (modelColumnMissing(error)) return new Map()
+    fail('listAgentModels', error)
+  }
+  const out = new Map<string, string>()
+  for (const row of (data ?? []) as { id: string; model?: string | null }[]) {
+    if (typeof row.model === 'string' && row.model.trim()) out.set(row.id, row.model)
+  }
+  return out
+}
+
 // ── Agent writes (owner-gated at the route layer) ─────────────────────
 
 export interface CreateAgentInput {
@@ -638,6 +658,8 @@ export interface UpdateAgentInput {
   cliCommand?: string | null
   instructions?: string | null
   enabled?: boolean
+  /** Registry model id (src/lib/nim.ts MODEL_LIST). Null = use the CLI's own default. */
+  model?: string | null
 }
 
 /** Blank is not a value here — see the check constraint in the migration. */
@@ -691,6 +713,10 @@ export async function updateAgent(id: string, patch: UpdateAgentInput): Promise<
   if (patch.enabled !== undefined) row.enabled = patch.enabled
   const instructions = normaliseInstructions(patch.instructions)
   if (instructions !== undefined) row.instructions = instructions
+  if (patch.model !== undefined) {
+    const model = patch.model?.trim()
+    row.model = model ? model : null
+  }
 
   if (Object.keys(row).length === 0) {
     const existing = await getAgentById(id)
@@ -709,6 +735,9 @@ export async function updateAgent(id: string, patch: UpdateAgentInput): Promise<
   if (error) {
     if (instructionsColumnMissing(error)) {
       throw new MissionStoreError(`updateAgent: apply ${INSTRUCTIONS_MIGRATION} before setting instructions.`, error)
+    }
+    if (modelColumnMissing(error)) {
+      throw new MissionStoreError(`updateAgent: apply ${MODEL_MIGRATION} before setting model.`, error)
     }
     fail('updateAgent', error)
   }
