@@ -94,15 +94,111 @@ the same reason.
   today's "glow reserved for rare emphasis" rule (`globals.css:342`).
 - Midnight stays byte-for-byte as-is. It is not part of the collapse.
 
-Naming is TBD when the theme ships — do not invent a permanent name in code
-before this doc has one. The `og` label is a poor fit for a monochrome theme;
-the theme toggle (`top-bar.tsx`) and the inline theme script (`layout.tsx`)
-are the two places the theme set is hardcoded and must change together.
+**[open]** Theme name. Proposed: **Graphite** (id `graphite`), carrying both a
+dark and a light variant. "OG" is a bad label for a monochrome theme and is
+replaced. Do not invent a permanent name in code before this doc has one; the
+theme toggle (`top-bar.tsx`) and the inline theme script (`layout.tsx`) are
+the two places the theme set is hardcoded and must change together. Also
+[open]: how the Graphite light/dark variant is selected — today the toggle is
+three flat options (`'og' | 'midnight' | 'light'`), and two themes where one
+has two variants is a different interaction (follow `prefers-color-scheme` vs
+an explicit in-theme toggle).
 
 Token surface to preserve: `--surface-*`, `--golem-*` (mascot), chart tokens,
 sidebar tokens, `--radius`, `--grid-line`. The mascot swatches are derived
 from palette tokens via `color-mix()` and re-derive automatically on a new
 theme (`globals.css:141-149`) — do not hardcode a new swatch set.
+
+### 2.3 The new theme — proposed tokens
+
+**[proposed — Henry confirms hex before build]** Concrete values for
+Graphite, both variants, matching §2.1's row structure exactly. The cyan ramp
+is Tailwind-aligned (`cyan-400` `#22d3ee` for dark, `cyan-700` `#0e7490` for
+light); the graphite ramp is a cool near-black / near-white pair with no warm
+or blue heritage. `--primary` and `--accent` are deliberately the same hue —
+cyan is the single accent.
+
+| Token | Graphite dark `[data-theme='graphite']` | Graphite light |
+| --- | --- | --- |
+| `--background` | `#0e1012` | `#ffffff` |
+| `--foreground` | `#f2f5f7` | `#17191c` |
+| `--card` / `--popover` | `#14171b` | `#ffffff` |
+| `--primary` | `#22d3ee` (cyan-400) | `#0e7490` (cyan-700) |
+| `--primary-dim` | `#0e7490` (cyan-700) | `#155e75` (cyan-800) |
+| `--secondary` / `--muted` | `#1a1e24` | `#f1f3f5` |
+| `--muted-foreground` | `#8b949e` | `#5b6470` |
+| `--accent` | `#22d3ee` | `#0e7490` |
+| `--destructive` | `#f87171` | `#dc2626` |
+| `--warning` | `#ffb800` | `#b45309` |
+| `--border` | `#262b31` | `#e2e5e9` |
+| `--input` | `#1a1e24` | `#e2e5e9` |
+| `--ring` | `#22d3ee` | `#0e7490` |
+| `--radius` | `0.375rem` | `0.375rem` |
+| `--surface-base` | `#0e1012` | `#ffffff` |
+| `--surface-secondary` | `#14171b` | `#f7f8fa` |
+| `--surface-elevated` | `#1a1e24` | `#f1f3f5` |
+| `--grid-line` | `rgba(38,43,49,0.3)` | `rgba(226,229,233,1)` |
+| chart 1–5 | `#22d3ee` `#0e7490` `#67e8f9` `#8b949e` `#f2f5f7` | `#0e7490` `#22d3ee` `#155e75` `#5b6470` `#94a3b8` |
+
+Supplementary tokens §2.1 omits but a real implementation needs — foreground
+variants (dark / light): `--primary-foreground` `#04222a` / `#ffffff`,
+`--secondary-foreground` `#f2f5f7` / `#17191c`, `--accent-foreground`
+`#04222a` / `#ffffff`, `--destructive-foreground` `#0e1012` / `#ffffff`,
+`--warning-foreground` `#0e1012` / `#ffffff`. Sidebar tokens mirror the
+surfaces: dark `#14171b` / fg `#f2f5f7` / primary `#22d3ee` / accent
+`#1a1e24` / border `#262b31`; light `#f7f8fa` / fg `#17191c` / primary
+`#0e7490` / accent `#e2e5e9` / border `#e2e5e9`.
+
+**Chart overrides.** The new theme defines `--chart-1..5` per variant (table
+above) — the current `:root`-only chart block (`globals.css:37-42`) is what
+makes Midnight inherit OG's warm charts today. **[open]** Midnight's charts
+are deliberately NOT proposed here because Midnight is frozen; re-tinting
+Midnight's charts (blue-family overrides to stop the warm inheritance) is a
+separate decision.
+
+**Verified `--golem-*` mascot derivation.** Dark Graphite needs no override —
+the generic `:root` derivation (`globals.css:141-149`) resolves to a graphite
+body with a cyan cast. Light Graphite has the same washing-out problem Light
+has today (`globals.css:157-162`), so it carries the analogous verified
+override, swapping the current light-blue base for soft cyan:
+
+```css
+/* light variant — mirrors the existing verified light override (globals.css:157-162), blue → cyan */
+--golem-clay: color-mix(in srgb, var(--primary) 30%, #e8f4f7);
+--golem-body: color-mix(in srgb, var(--primary) 22%, var(--golem-clay));
+--golem-body-shade: color-mix(in srgb, var(--golem-body) 74%, #0a3b47);
+--golem-body-light: color-mix(in srgb, var(--golem-body) 82%, #fff);
+```
+
+**The brown Golem goes away with the OG collapse.** The mascot body is
+palette-derived: on OG, gold `#b8935a` primary + rust `#a85c3f` accent mix
+into the brown/tan Golem Henry called out (see the warm `FALLBACK` in
+`golem-colors.ts:30-37`). Under Graphite the body becomes graphite + cyan
+cast, not brown. The per-model accent tint (`--golem-model-tint` /
+`golemTintForModel`) is a separate provider-identity system and survives the
+collapse — it is the accent on a monochrome body, not the body itself. Do not
+treat the brown Golem as intentional brand.
+
+### 2.4 Contrast / accessibility
+
+**[decided]** WCAG AA is the floor: **4.5:1** for normal text, **3:1** for
+large text and for UI components / graphical objects (WCAG 1.4.11).
+
+- **Cyan is accent/state, not body text.** Cyan text only where it passes
+  contrast on the surface directly behind it. Solid-cyan fills never carry
+  cyan text — status presentation is tinted (e.g. `bg-primary/10` +
+  `border-primary/40` + `text-primary`, the pattern already used across
+  badges), which keeps cyan read as state, not surface.
+- Measured against the §2.3 proposal (all pass): dark `#22d3ee` on card
+  `#14171b` = **9.95:1**; dark `#22d3ee` on background `#0e1012` = **10.55:1**;
+  light `#0e7490` on `#ffffff` = **5.36:1**; light `#0e7490` on
+  `#f7f8fa` = **5.04:1**; dark muted `#8b949e` on `#0e1012` = **6.20:1**;
+  light muted `#5b6470` on white = **6.00:1**. The reason the light primary is
+  cyan-700 and not cyan-600: `#0891b2` on white is **3.68:1** — below the
+  floor. The warning token was deepened for the same reason (`#b45309` on
+  white = **5.02:1**; today's amber-500-style warning fails as text on light).
+- Any token change to §2.3 must be re-measured against these targets before
+  landing — do not ship a hex because it "looks fine".
 
 ---
 
@@ -258,4 +354,7 @@ settled component set instead of chasing moving markup.
   `src/components/agency/agency-workspace.tsx`.
 - Org-chart data: `agents.parent_id`
   (`supabase/migrations/20260806030000_mission_spine.sql:40,49`).
+- Mascot palette: `src/components/golem/golem-colors.ts` (theme-token → WebGL
+  bridge, `FALLBACK` warm swatches at lines 30-37) and the `--golem-*`
+  derivation in `globals.css:141-175`.
 - Naming rule: `AGENTS.md` ("Naming" section).
