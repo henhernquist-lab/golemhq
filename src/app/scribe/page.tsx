@@ -126,9 +126,12 @@ function ArchitectPageInner() {
 
           try {
             const parsed = JSON.parse(data)
-            // AI SDK v3 SSE format: { type: 'text-delta', textDelta: '...' }
-            if (parsed.type === 'text-delta' && typeof parsed.textDelta === 'string') {
-              fullText += parsed.textDelta
+            // AI SDK v6 UIMessageStream chunk (from toUIMessageStreamResponse):
+            // text arrives as { type: 'text-delta', id, delta } — the field is
+            // `delta`, NOT the v3 `textDelta` this client used to read. That
+            // mismatch dropped every token and left an empty assistant bubble.
+            if (parsed.type === 'text-delta' && typeof parsed.delta === 'string') {
+              fullText += parsed.delta
               setLines((l) => {
                 const updated = [...l]
                 const last = updated[updated.length - 1]
@@ -138,18 +141,30 @@ function ArchitectPageInner() {
                 return updated
               })
             }
-            // End of stream: { type: 'finish' }
-            if (parsed.type === 'finish') {
-              // Complete
-            }
-            // Error: { type: 'error', error: '...' }
+            // v6 error chunk carries `errorText`, not v3's `error`.
             if (parsed.type === 'error') {
-              setLines((l) => [...l.slice(0, -1), { kind: 'error', text: parsed.error || 'Stream error' }])
+              setLines((l) => [...l.slice(0, -1), { kind: 'error', text: parsed.errorText || parsed.error || 'Stream error' }])
             }
+            // text-start / text-end / finish / reasoning-* / tool-* chunks carry
+            // no renderable text for this plain-chat UI — deliberately ignored.
           } catch {
             // Non-JSON line, skip
           }
         }
+      }
+
+      // Stream closed with no text: don't leave an empty assistant bubble —
+      // surface a real error instead of empty air.
+      if (!fullText) {
+        setLines((l) => {
+          const updated = [...l]
+          const last = updated[updated.length - 1]
+          if (last && last.kind === 'assistant' && last.text === '') {
+            updated[updated.length - 1] = { kind: 'error', text: 'The Prompt Engineer returned an empty response. Try again or switch models.' }
+          }
+          return updated
+        })
+        return
       }
 
       // Auto-save on completion
