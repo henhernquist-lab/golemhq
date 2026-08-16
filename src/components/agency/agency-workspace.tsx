@@ -23,15 +23,15 @@
 // grid, back link) when a parent shell already provides navigation.
 
 import { useCallback, useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
-import Link from 'next/link'
 import {
-  ArrowLeft, Network, Play, Pause, MessageSquare, Pencil, Plus, RefreshCw,
+  Network, Play, Pause, MessageSquare, Pencil, Plus, RefreshCw,
   CheckCircle2, XCircle, HelpCircle, Ban, Loader2, Activity, Terminal,
 } from 'lucide-react'
 
 import { HireWorkerPanel, type EditableAgent } from '@/components/missions/hire-worker'
 import { AgentChatPanel } from '@/components/missions/agent-chat-panel'
+import { WorkspaceShell } from '@/components/workspace/workspace-shell'
+import { StatusBadge, type BadgeTone } from '@/components/workspace/status-badge'
 import { AGENT_LAYER_LABELS, AGENT_LAYERS, type Agent, type AgentLayer } from '@/lib/missions/types'
 
 const POLL_MS = 6000
@@ -71,28 +71,37 @@ function when(iso: string | null): string {
   return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+const AUDIT_TONE: Record<AuditStatus, BadgeTone> = {
+  working: 'primary',
+  broken: 'danger',
+  absent: 'warning',
+  not_applicable: 'neutral',
+}
+
+const AUDIT_ICON: Record<AuditStatus, typeof HelpCircle> = {
+  working: CheckCircle2,
+  broken: XCircle,
+  absent: Ban,
+  not_applicable: HelpCircle,
+}
+
 function AuditBadge({ agent, busy, onRun }: { agent: AgencyAgent; busy: boolean; onRun: () => void }) {
   if (agent.layer !== 2 || !agent.cliCommand) {
-    return <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">logic · not a CLI</span>
+    return <StatusBadge tone="neutral" size="sm" uppercase={false} label="logic · not a CLI" />
   }
   const a = agent.audit
-  const tone =
-    !a ? 'border-border text-muted-foreground'
-    : a.status === 'working' ? 'border-primary/40 bg-primary/10 text-primary'
-    : a.status === 'broken' ? 'border-red-500/40 bg-red-500/10 text-red-400'
-    : a.status === 'absent' ? 'border-warning/40 bg-warning/10 text-warning'
-    : 'border-border text-muted-foreground'
-  const Icon = !a ? HelpCircle : a.status === 'working' ? CheckCircle2 : a.status === 'broken' ? XCircle : a.status === 'absent' ? Ban : HelpCircle
   return (
-    <button
+    <StatusBadge
+      tone={a ? AUDIT_TONE[a.status] : 'neutral'}
+      size="sm"
+      icon={a ? AUDIT_ICON[a.status] : HelpCircle}
+      busy={busy}
+      busyIcon={Loader2}
       onClick={onRun}
       disabled={busy}
       title={a ? `${a.detail} · audited ${when(a.ts)}` : 'never audited — click to run a real invocation'}
-      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide transition-colors hover:border-primary/40 disabled:opacity-50 ${tone}`}
-    >
-      {busy ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <Icon className="h-2.5 w-2.5" />}
-      {busy ? 'auditing…' : a ? a.status.replace('_', ' ') : 'not audited'}
-    </button>
+      label={busy ? 'auditing…' : a ? a.status.replace('_', ' ') : 'not audited'}
+    />
   )
 }
 
@@ -129,9 +138,11 @@ function AgentCard({
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <span className={`rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${agent.enabled ? 'border-primary/30 text-primary' : 'border-border text-muted-foreground'}`}>
-          {agent.enabled ? 'active' : 'paused'}
-        </span>
+        <StatusBadge
+          tone={agent.enabled ? 'primaryOutline' : 'neutral'}
+          size="sm"
+          label={agent.enabled ? 'active' : 'paused'}
+        />
         <AuditBadge agent={agent} busy={auditing} onRun={onAudit} />
       </div>
 
@@ -241,27 +252,14 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
 
   const agentName = (id: string | null) => (id ? agents.find((a) => a.id === id)?.name ?? null : null)
 
-  const inner = (
-    <div className={embedded ? 'mx-auto w-full max-w-6xl px-6 py-8' : 'relative z-10 mx-auto w-full max-w-6xl px-6 py-10'}>
-      {!embedded && (
-        <Link href="/" className="mb-8 inline-flex items-center gap-2 font-mono text-xs text-muted-foreground transition-colors hover:text-primary">
-          <ArrowLeft className="h-3.5 w-3.5" /> back to golem
-        </Link>
-      )}
-
-      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-8 flex items-end justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary/30 bg-primary/10">
-            <Network className="h-4 w-4 text-primary" />
-          </div>
-          <div>
-            <h1 className="font-mono text-lg text-foreground">agency</h1>
-            <p className="font-mono text-xs text-muted-foreground">
-              org chart · pause/resume · real functional status · refreshes every {POLL_MS / 1000}s
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+  return (
+    <WorkspaceShell
+      embedded={embedded}
+      icon={Network}
+      title="agency"
+      subtitle={`org chart · pause/resume · real functional status · refreshes every ${POLL_MS / 1000}s`}
+      actions={
+        <>
           <button
             onClick={() => { setEditing(null); setHiring((v) => !v) }}
             className="inline-flex items-center gap-1.5 rounded border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-mono text-xs text-primary transition-colors hover:bg-primary/20"
@@ -274,9 +272,9 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
           >
             <RefreshCw className="h-3 w-3" /> refresh
           </button>
-        </div>
-      </motion.div>
-
+        </>
+      }
+    >
       {error && (
         <div className="mb-6 rounded border border-warning/40 bg-warning/10 px-3 py-2 font-mono text-xs text-warning">{error}</div>
       )}
@@ -347,18 +345,6 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
           </div>
         </section>
       </div>
-    </div>
-  )
-
-  if (embedded) return inner
-
-  return (
-    <div className="relative flex min-h-screen flex-col bg-transparent">
-      <div className="pointer-events-none fixed inset-0 z-0">
-        <div className="absolute inset-0 grid-overlay opacity-30" />
-        <div className="absolute inset-0" style={{ background: 'radial-gradient(ellipse at center, transparent 0%, rgba(8,8,8,0.6) 100%)' }} />
-      </div>
-      {inner}
-    </div>
+    </WorkspaceShell>
   )
 }

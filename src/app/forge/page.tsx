@@ -20,8 +20,26 @@ import { SKILLS as ALL_SKILLS, detectSkillInvocation, detectSkillInvocations, bu
 import { classifyTaskComplexity, autoSelectForComplexity } from '@/lib/drive/auto-select'
 import { DriveSteps, type DriveStep } from '@/components/drive-steps'
 import { RouterExplanation } from '@/components/router/router-explanation'
+import { WorkspaceShell } from '@/components/workspace/workspace-shell'
+import { TabStrip, type TabStripItem } from '@/components/workspace/tab-strip'
 import { buildRoutingDecision } from '@/lib/router/explain'
 import type { RoutingDecision } from '@/lib/router/types'
+
+// ─── Tabs ───────────────────────────────────────────────────
+
+type PrimaryTab = 'forge' | 'missions' | 'agency'
+type WorkspaceMode = 'chat' | 'command'
+
+const PRIMARY_TABS: readonly TabStripItem<PrimaryTab>[] = [
+  { id: 'forge', label: 'Forge', icon: Swords },
+  { id: 'missions', label: 'Missions', icon: ListTree, title: 'The real mission spine — missions, task graph, agent roster' },
+  { id: 'agency', label: 'Agency', icon: Network, title: 'Org chart, pause/resume, real functional audits' },
+]
+
+const WORKSPACE_TABS: readonly TabStripItem<WorkspaceMode>[] = [
+  { id: 'chat', label: 'Chat', icon: MessageSquare, title: 'Chat workspace — conversation, model, skills (no terminals)' },
+  { id: 'command', label: 'Terminals', icon: TerminalSquare, title: 'Command workspace — full IDE terminals (no chat)' },
+]
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -303,7 +321,7 @@ export default function AgentPage() {
   // Cruise-flavored scan-and-fix history (see the removed
   // src/components/agent/missions-panel.tsx), which is now the real mission
   // spine one level up, as its own `primaryTab` alongside Forge and Agency.
-  const [workspaceMode, setWorkspaceMode] = useState<'chat' | 'command'>(
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(
     () => {
       if (typeof window === 'undefined') return 'chat'
       const saved = localStorage.getItem('golem.drive.mode')
@@ -320,7 +338,7 @@ export default function AgentPage() {
   // workspaceMode above does: switching tabs must not lose Forge's live
   // terminal sessions or chat state.
   const searchParams = useSearchParams()
-  const [primaryTab, setPrimaryTab] = useState<'forge' | 'missions' | 'agency'>(
+  const [primaryTab, setPrimaryTab] = useState<PrimaryTab>(
     () => {
       const fromQuery = searchParams.get('tab')
       if (fromQuery === 'missions' || fromQuery === 'agency' || fromQuery === 'forge') return fromQuery
@@ -1068,33 +1086,12 @@ USER REQUEST: ${userText}`
   }
 
   return (
-    <div className="flex h-screen flex-col bg-background font-sans">
+    <WorkspaceShell variant="fullscreen">
       {/* Unified workspace switcher (Batch 8.5) — Forge / Missions (real
           spine) / Agency (org chart) as one tabbed page. Sits above Forge's
           own Chat/Terminals switcher below, which is a sub-mode of the Forge
           tab specifically, not a sibling of Missions/Agency anymore. */}
-      <div className="flex h-9 flex-shrink-0 items-center gap-0.5 border-b border-border bg-surface-secondary px-3">
-        <button onClick={() => setPrimaryTab('forge')}
-          className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] transition-colors ${
-            primaryTab === 'forge' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
-          }`}>
-          <Swords className="h-3 w-3" /> Forge
-        </button>
-        <button onClick={() => setPrimaryTab('missions')}
-          className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] transition-colors ${
-            primaryTab === 'missions' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
-          }`}
-          title="The real mission spine — missions, task graph, agent roster">
-          <ListTree className="h-3 w-3" /> Missions
-        </button>
-        <button onClick={() => setPrimaryTab('agency')}
-          className={`flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] transition-colors ${
-            primaryTab === 'agency' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
-          }`}
-          title="Org chart, pause/resume, real functional audits">
-          <Network className="h-3 w-3" /> Agency
-        </button>
-      </div>
+      <TabStrip items={PRIMARY_TABS} active={primaryTab} onSelect={setPrimaryTab} />
 
       <div className={`flex min-h-0 flex-1 flex-col ${primaryTab === 'forge' ? '' : 'hidden'}`}>
       {/* Top bar */}
@@ -1106,22 +1103,7 @@ USER REQUEST: ${userText}`
         <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/50">Coding Agent</span>
 
         {/* Chat / Terminals workspace switcher — fully separate workspaces */}
-        <div className="flex items-center gap-0.5 rounded border border-border bg-surface-secondary p-0.5">
-          <button onClick={() => setWorkspaceMode('chat')}
-            className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
-              workspaceMode === 'chat' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
-            }`}
-            title="Chat workspace — conversation, model, skills (no terminals)">
-            <MessageSquare className="h-3 w-3" /> Chat
-          </button>
-          <button onClick={() => setWorkspaceMode('command')}
-            className={`flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors ${
-              workspaceMode === 'command' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
-            }`}
-            title="Command workspace — full IDE terminals (no chat)">
-            <TerminalSquare className="h-3 w-3" /> Terminals
-          </button>
-        </div>
+        <TabStrip items={WORKSPACE_TABS} active={workspaceMode} onSelect={setWorkspaceMode} size="sub" />
 
         <div className="ml-auto flex items-center gap-3">
           {/* See Golem — opens The Atelier with this surface's live context:
@@ -1837,6 +1819,6 @@ USER REQUEST: ${userText}`
       <div className={`min-h-0 flex-1 overflow-y-auto ${primaryTab === 'agency' ? '' : 'hidden'}`}>
         <AgencyWorkspace embedded />
       </div>
-    </div>
+    </WorkspaceShell>
   )
 }

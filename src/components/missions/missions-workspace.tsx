@@ -19,13 +19,13 @@
 // link) when a parent shell already provides navigation and framing.
 
 import { useCallback, useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
-import Link from 'next/link'
-import { ArrowLeft, ListTree, MessageSquare, Pencil, Plus, RefreshCw, Server } from 'lucide-react'
+import { ListTree, MessageSquare, Pencil, Plus, RefreshCw, Server } from 'lucide-react'
 
 import { TaskEvidencePanel } from '@/components/missions/task-evidence'
 import { HireWorkerPanel, type EditableAgent } from '@/components/missions/hire-worker'
 import { AgentChatPanel } from '@/components/missions/agent-chat-panel'
+import { WorkspaceShell } from '@/components/workspace/workspace-shell'
+import { StatusBadge, type BadgeTone } from '@/components/workspace/status-badge'
 
 import type { Agent, Mission, Task, TaskStatus, MissionStatus } from '@/lib/missions/types'
 import { AGENT_LAYER_LABELS } from '@/lib/missions/types'
@@ -77,32 +77,31 @@ interface ValidationPayload {
   checks?: { name: string; status: string; reason: string | null }[]
 }
 
-// Tokens only — raw Tailwind colours would drift from the rest of the app.
-const TASK_TONE: Record<TaskStatus, string> = {
-  pending: 'border-border text-muted-foreground',
-  assigned: 'border-border text-foreground',
-  running: 'border-primary/40 bg-primary/10 text-primary',
-  validating: 'border-warning/40 bg-warning/10 text-warning',
-  complete: 'border-primary/50 bg-primary/15 text-primary',
-  failed: 'border-red-500/40 bg-red-500/10 text-red-400',
-  blocked: 'border-border bg-surface-elevated text-muted-foreground',
+// Tone names, not class strings — the classes live in one place now
+// (src/components/workspace/status-badge.tsx). Same rendered output.
+const TASK_TONE: Record<TaskStatus, BadgeTone> = {
+  pending: 'neutral',
+  assigned: 'foreground',
+  running: 'primary',
+  validating: 'warning',
+  complete: 'primaryStrong',
+  failed: 'danger',
+  blocked: 'surface',
 }
 
-const MISSION_TONE: Record<MissionStatus, string> = {
-  planning: 'border-border text-muted-foreground',
-  awaiting_approval: 'border-warning/40 bg-warning/10 text-warning',
-  running: 'border-primary/40 bg-primary/10 text-primary',
-  completed: 'border-primary/50 bg-primary/15 text-primary',
-  failed: 'border-red-500/40 bg-red-500/10 text-red-400',
-  cancelled: 'border-border text-muted-foreground',
+const MISSION_TONE: Record<MissionStatus, BadgeTone> = {
+  planning: 'neutral',
+  awaiting_approval: 'warning',
+  running: 'primary',
+  completed: 'primaryStrong',
+  failed: 'danger',
+  cancelled: 'neutral',
 }
 
-function Badge({ label, tone }: { label: string; tone: string }) {
-  return (
-    <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${tone}`}>
-      {label}
-    </span>
-  )
+const LEASE_TONE: Record<LeaseView['leaseType'], BadgeTone> = {
+  exclusive: 'warning',
+  write: 'primary',
+  read: 'neutral',
 }
 
 function when(iso: string | null): string {
@@ -220,34 +219,13 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
     }
   }
 
-  const inner = (
-    <div className={embedded ? 'mx-auto w-full max-w-6xl px-6 py-8' : 'relative z-10 mx-auto w-full max-w-6xl px-6 py-10'}>
-      {!embedded && (
-        <Link
-          href="/"
-          className="mb-8 inline-flex items-center gap-2 font-mono text-xs text-muted-foreground transition-colors hover:text-primary"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          back to golem
-        </Link>
-      )}
-
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mb-8 flex items-end justify-between gap-4"
-      >
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary/30 bg-primary/10">
-            <ListTree className="h-4 w-4 text-primary" />
-          </div>
-          <div>
-            <h1 className="font-mono text-lg text-foreground">missions</h1>
-            <p className="font-mono text-xs text-muted-foreground">
-              mission spine · open a task for its evidence · refreshes every {POLL_MS / 1000}s
-            </p>
-          </div>
-        </div>
+  return (
+    <WorkspaceShell
+      embedded={embedded}
+      icon={ListTree}
+      title="missions"
+      subtitle={`mission spine · open a task for its evidence · refreshes every ${POLL_MS / 1000}s`}
+      actions={
         <button
           onClick={loadList}
           className="inline-flex items-center gap-2 rounded border border-border px-2.5 py-1.5 font-mono text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
@@ -255,8 +233,8 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
           <RefreshCw className="h-3 w-3" />
           refresh
         </button>
-      </motion.div>
-
+      }
+    >
       {error && (
         <div className="mb-6 rounded border border-warning/40 bg-warning/10 px-3 py-2 font-mono text-xs text-warning">
           {error}
@@ -290,7 +268,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-mono text-xs text-foreground">{m.repo}</span>
-                  <Badge label={m.status} tone={MISSION_TONE[m.status]} />
+                  <StatusBadge label={m.status} tone={MISSION_TONE[m.status]} />
                 </div>
                 <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{m.goal}</p>
                 <p className="mt-1.5 font-mono text-[10px] text-muted-foreground">{when(m.createdAt)}</p>
@@ -356,16 +334,16 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                           : 'branch missing — work not recoverable'}
                       </span>
                     </button>
-                    <Badge
+                    <StatusBadge
                       label={t.decision}
                       tone={
                         t.decision === 'conflicted'
-                          ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                          ? 'danger'
                           : t.decision === 'rejected'
-                            ? 'border-border text-muted-foreground'
+                            ? 'neutral'
                             : t.decision === 'approved'
-                              ? 'border-primary/40 bg-primary/10 text-primary'
-                              : 'border-warning/40 bg-warning/10 text-warning'
+                              ? 'primary'
+                              : 'warning'
                       }
                     />
                   </div>
@@ -401,7 +379,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                           {openTaskId === t.id ? '▾ evidence' : '▸ evidence'}
                         </span>
                       </button>
-                      <Badge label={t.status} tone={TASK_TONE[t.status]} />
+                      <StatusBadge label={t.status} tone={TASK_TONE[t.status]} />
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] text-muted-foreground">
                       <span>priority: {t.priority}</span>
@@ -417,19 +395,14 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         <span className="font-mono text-[10px] text-muted-foreground">leases:</span>
                         {held.map((l) => (
-                          <span
+                          <StatusBadge
                             key={l.id}
                             title={`expires ${new Date(l.expiresAt).toLocaleTimeString()}`}
-                            className={`rounded border px-1.5 py-0.5 font-mono text-[9px] ${
-                              l.leaseType === 'exclusive'
-                                ? 'border-warning/40 bg-warning/10 text-warning'
-                                : l.leaseType === 'write'
-                                  ? 'border-primary/40 bg-primary/10 text-primary'
-                                  : 'border-border text-muted-foreground'
-                            }`}
-                          >
-                            {l.leaseType} {l.pathGlob}
-                          </span>
+                            tone={LEASE_TONE[l.leaseType]}
+                            size="sm"
+                            uppercase={false}
+                            label={`${l.leaseType} ${l.pathGlob}`}
+                          />
                         ))}
                       </div>
                     )}
@@ -534,9 +507,9 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                   </td>
                   <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">{a.cliCommand ?? '—'}</td>
                   <td className="px-3 py-2">
-                    <Badge
+                    <StatusBadge
                       label={a.enabled ? 'enabled' : 'disabled'}
-                      tone={a.enabled ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border text-muted-foreground'}
+                      tone={a.enabled ? 'primary' : 'neutral'}
                     />
                   </td>
                   <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">
@@ -612,21 +585,6 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
           </table>
         </div>
       </section>
-    </div>
-  )
-
-  if (embedded) return inner
-
-  return (
-    <div className="relative flex min-h-screen flex-col bg-transparent">
-      <div className="pointer-events-none fixed inset-0 z-0">
-        <div className="absolute inset-0 grid-overlay opacity-30" />
-        <div
-          className="absolute inset-0"
-          style={{ background: 'radial-gradient(ellipse at center, transparent 0%, rgba(8,8,8,0.6) 100%)' }}
-        />
-      </div>
-      {inner}
-    </div>
+    </WorkspaceShell>
   )
 }
