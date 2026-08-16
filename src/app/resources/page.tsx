@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ArrowLeft,
+  BarChart3,
   ChevronRight,
   ChevronLeft,
   Loader2,
@@ -32,11 +33,13 @@ import { AnimatedNumber } from '@/components/animated-number'
 
 interface ToolDef {
   slug: string
-  type: ResourceType
+  type?: ResourceType
   name: string
   desc: string
   icon: typeof BookOpen
   href?: string
+  /** Reference tool: nothing saved, so skip the count fetch and [SAVED] footer. */
+  saved?: false
 }
 
 // NOTE: 'flashcards' and 'articles' were migrated into Golem Learn (tool
@@ -49,6 +52,7 @@ interface ToolDef {
 const TOOLS: ToolDef[] = [
   { slug: 'grade-calculator', type: 'grade_calc',   name: 'Grade Calculator',    desc: 'What do you need on finals for target GPA?',          icon: Calculator },
   { slug: 'repo-scanner',     type: 'repo_scan',     name: 'Repo Scanner',        desc: 'Chat, evaluate fit, or run a code review for any GitHub repo', icon: GitBranch },
+  { slug: 'model-comparer',   name: 'Model Comparer',      desc: 'Compare models across capability, benchmarks, price & context', icon: BarChart3, href: '/resources/model-comparer', saved: false },
   { slug: 'prompts',          type: 'prompt',        name: 'Prompt Library',      desc: 'Browse and save reusable AI prompts',               icon: BookMarked },
   { slug: 'race-pace',        type: 'race_pace',       name: 'Race Pace Calculator', desc: 'Split targets and PR tracking',                     icon: Timer },
   { slug: 'notes',            type: 'note',            name: 'The Grimoire',         desc: 'Fast capture, no fuss',                             icon: StickyNote },
@@ -72,8 +76,12 @@ function useSavedCounts() {
     let cancelled = false
     setLoading(true)
 
+    const savedTools = TOOLS.filter(
+      (tool): tool is ToolDef & { type: ResourceType } => tool.saved !== false && tool.type !== undefined,
+    )
+
     Promise.all(
-      TOOLS.map(async (tool) => {
+      savedTools.map(async (tool) => {
         try {
           const items = await loadResources(tool.type)
           return { type: tool.type, count: items.length }
@@ -266,7 +274,7 @@ function ResourcesContent() {
               >
                 {pageTools.map((tool, i) => {
                   const Icon = tool.icon
-                  const count = counts[tool.type] ?? 0
+                  const count = tool.type ? (counts[tool.type] ?? 0) : 0
                   return (
                     <motion.a
                       key={tool.slug}
@@ -294,7 +302,11 @@ function ResourcesContent() {
 
                       {/* Saved count footer — terminal style */}
                       <div className="mt-auto flex items-center justify-between border-t border-border/20 pt-3">
-                        {countsLoading ? (
+                        {tool.saved === false ? (
+                          <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/30">
+                            [REFERENCE]
+                          </span>
+                        ) : countsLoading ? (
                           <div className="flex items-center gap-1.5">
                             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
                             <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
