@@ -8,11 +8,9 @@
 // the task list. Each carried its own copy of the tone strings, so a tone
 // added in one place silently didn't exist in the others.
 //
-// Phase 1 of the design.md build order is de-duplication with ZERO visual
-// change, so every class string here is lifted verbatim from the call site it
-// replaces — including the two text sizes, the uppercase/plain split, and the
-// `inline-flex` that only appears when there is an icon to lay out. Do not
-// "tidy" those into one shape without a deliberate visual decision.
+// Phase 2 keeps one tone map and applies the smooth treatment once: softer
+// boundaries, pill geometry, a little more line-height, and elevation that
+// does not turn every status into a bright accent outline.
 
 import type { LucideIcon } from 'lucide-react'
 
@@ -31,19 +29,19 @@ export type BadgeTone =
   | 'danger'
 
 export const BADGE_TONES: Record<BadgeTone, string> = {
-  neutral: 'border-border text-muted-foreground',
-  foreground: 'border-border text-foreground',
-  surface: 'border-border bg-surface-elevated text-muted-foreground',
-  primary: 'border-primary/40 bg-primary/10 text-primary',
-  primaryStrong: 'border-primary/50 bg-primary/15 text-primary',
-  primaryOutline: 'border-primary/30 text-primary',
-  warning: 'border-warning/40 bg-warning/10 text-warning',
-  danger: 'border-red-500/40 bg-red-500/10 text-red-400',
+  neutral: 'border-border/40 bg-surface-secondary/50 text-muted-foreground shadow-sm',
+  foreground: 'border-border/40 bg-surface-secondary/50 text-foreground shadow-sm',
+  surface: 'border-border/40 bg-surface-elevated/80 text-muted-foreground shadow-sm',
+  primary: 'border-primary/20 bg-primary/10 text-primary shadow-sm',
+  primaryStrong: 'border-primary/25 bg-primary/15 text-primary shadow-sm',
+  primaryOutline: 'border-primary/20 bg-primary/5 text-primary shadow-sm',
+  warning: 'border-warning/25 bg-warning/10 text-warning shadow-sm',
+  danger: 'border-red-500/25 bg-red-500/10 text-red-400 shadow-sm',
 }
 
 const SIZES = {
-  sm: 'text-[9px]',
-  md: 'text-[10px]',
+  sm: 'text-[10px] leading-4',
+  md: 'text-[11px] leading-4',
 } as const
 
 interface StatusBadgeProps {
@@ -78,10 +76,10 @@ export function StatusBadge({
   const RenderIcon = busy ? BusyIcon : Icon
   const base = [
     RenderIcon ? 'inline-flex items-center gap-1' : '',
-    'rounded border px-1.5 py-0.5 font-mono',
+    'rounded-full border px-2 py-1 font-mono',
     SIZES[size],
     uppercase ? 'uppercase tracking-wide' : '',
-    onClick ? 'transition-colors hover:border-primary/40 disabled:opacity-50' : '',
+    onClick ? 'transition-colors hover:border-primary/30 hover:bg-primary/10 disabled:opacity-50' : '',
     BADGE_TONES[tone],
   ]
     .filter(Boolean)

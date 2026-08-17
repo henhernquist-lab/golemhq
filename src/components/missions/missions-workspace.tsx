@@ -24,7 +24,11 @@ import { ListTree, MessageSquare, Pencil, Plus, RefreshCw, Server } from 'lucide
 import { TaskEvidencePanel } from '@/components/missions/task-evidence'
 import { HireWorkerPanel, type EditableAgent } from '@/components/missions/hire-worker'
 import { AgentChatPanel } from '@/components/missions/agent-chat-panel'
-import { WorkspaceShell } from '@/components/workspace/workspace-shell'
+import {
+  WORKSPACE_CARD_CLASS,
+  WORKSPACE_INSET_CLASS,
+  WorkspaceShell,
+} from '@/components/workspace/workspace-shell'
 import { StatusBadge, type BadgeTone } from '@/components/workspace/status-badge'
 
 import type { Agent, Mission, Task, TaskStatus, MissionStatus } from '@/lib/missions/types'
@@ -228,7 +232,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
       actions={
         <button
           onClick={loadList}
-          className="inline-flex items-center gap-2 rounded border border-border px-2.5 py-1.5 font-mono text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+          className="inline-flex items-center gap-2 rounded-lg bg-surface-secondary px-3 py-2 font-mono text-xs leading-5 text-muted-foreground shadow-sm ring-1 ring-foreground/10 transition-colors hover:bg-surface-elevated/70 hover:text-primary"
         >
           <RefreshCw className="h-3 w-3" />
           refresh
@@ -236,18 +240,18 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
       }
     >
       {error && (
-        <div className="mb-6 rounded border border-warning/40 bg-warning/10 px-3 py-2 font-mono text-xs text-warning">
+        <div className="mb-8 rounded-xl bg-warning/10 px-4 py-3 font-mono text-xs leading-5 text-warning shadow-sm ring-1 ring-warning/20">
           {error}
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         {/* ── Missions ─────────────────────────────────────────── */}
         <section>
-          <h2 className="mb-3 font-mono text-xs uppercase tracking-wide text-muted-foreground">
+          <h2 className="mb-4 font-mono text-sm uppercase tracking-wide leading-6 text-muted-foreground">
             missions ({missions.length})
           </h2>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {loading && missions.length === 0 && (
               <p className="font-mono text-xs text-muted-foreground">loading…</p>
             )}
@@ -260,18 +264,18 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
               <button
                 key={m.id}
                 onClick={() => setSelectedId(m.id === selectedId ? null : m.id)}
-                className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                className={`rounded-xl px-4 py-4 text-left leading-5 shadow-sm ring-1 transition-colors ${
                   m.id === selectedId
-                    ? 'border-primary/40 bg-primary/5'
-                    : 'border-border bg-surface-secondary hover:border-primary/30'
+                    ? 'bg-primary/5 ring-primary/20'
+                    : 'bg-surface-secondary ring-foreground/5 hover:bg-surface-elevated/70'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-mono text-xs text-foreground">{m.repo}</span>
                   <StatusBadge label={m.status} tone={MISSION_TONE[m.status]} />
                 </div>
-                <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{m.goal}</p>
-                <p className="mt-1.5 font-mono text-[10px] text-muted-foreground">{when(m.createdAt)}</p>
+                <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{m.goal}</p>
+                <p className="mt-2 font-mono text-[11px] leading-5 text-muted-foreground">{when(m.createdAt)}</p>
               </button>
             ))}
           </div>
@@ -279,7 +283,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
 
         {/* ── Tasks for the selected mission ───────────────────── */}
         <section>
-          <h2 className="mb-3 font-mono text-xs uppercase tracking-wide text-muted-foreground">
+          <h2 className="mb-4 font-mono text-sm uppercase tracking-wide leading-6 text-muted-foreground">
             {selected ? `tasks · ${selected.repo}` : 'tasks'}
           </h2>
           {!selected && (
@@ -293,8 +297,8 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
               is a fan-out, not one diff. Conflicts between two task
               branches are normal here and are shown as blocking. */}
           {selected && (approval || approvalError) && (
-            <div className="mb-3 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2.5">
-              <div className="flex items-center justify-between gap-3">
+            <div className={`mb-4 px-4 py-4 ${WORKSPACE_INSET_CLASS}`}>
+              <div className="flex items-center justify-between gap-4">
                 <span className="font-mono text-[10px] uppercase tracking-wider text-warning">
                   approval gate{approval ? ` · target ${approval.targetBranch}` : ''}
                 </span>
@@ -303,14 +307,14 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                     <button
                       disabled={approvalBusy}
                       onClick={() => void act('approve')}
-                      className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] text-primary hover:bg-primary/20 disabled:opacity-40"
+                      className="rounded-lg bg-primary/10 px-3 py-1.5 font-mono text-[10px] leading-4 text-primary shadow-sm ring-1 ring-primary/15 hover:bg-primary/15 disabled:opacity-40"
                     >
                       {approvalBusy ? 'merging…' : 'approve + merge'}
                     </button>
                     <button
                       disabled={approvalBusy}
                       onClick={() => void act('reject')}
-                      className="rounded border border-border px-2 py-0.5 font-mono text-[10px] text-muted-foreground hover:text-red-400 disabled:opacity-40"
+                      className="rounded-lg bg-surface-secondary px-3 py-1.5 font-mono text-[10px] leading-4 text-muted-foreground shadow-sm ring-1 ring-foreground/10 hover:text-red-400 disabled:opacity-40"
                     >
                       reject
                     </button>
@@ -321,7 +325,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                 <p className="mt-1.5 font-mono text-[10px] text-muted-foreground">{approvalError}</p>
               )}
               {approval?.tasks.filter((t) => t.decision !== 'merged').map((t) => (
-                <div key={t.branch} className="mt-2 border-t border-border/60 pt-2">
+                <div key={t.branch} className="mt-3 border-t border-border/30 pt-3">
                   <div className="flex items-start justify-between gap-3">
                     <button
                       onClick={() => setOpenDiffId(openDiffId === t.task.id ? null : t.task.id)}
@@ -348,7 +352,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                     />
                   </div>
                   {openDiffId === t.task.id && t.patch && (
-                    <pre className="mt-1.5 max-h-72 overflow-auto rounded border border-border bg-surface-base p-2 font-mono text-[9px] leading-relaxed text-muted-foreground">
+                    <pre className="mt-2 max-h-72 overflow-auto rounded-xl bg-surface-base p-3 font-mono text-[10px] leading-relaxed text-muted-foreground shadow-sm ring-1 ring-foreground/5">
                       {t.patch}
                       {t.patchTruncated ? '\n… truncated' : ''}
                     </pre>
@@ -358,7 +362,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
             </div>
           )}
 
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {selected &&
               tasks.map((t, i) => {
                 const validation = validations[t.id]
@@ -367,7 +371,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                 // recorded before a successful run is history, not state.
                 const conflict = t.status === 'pending' ? conflicts[t.id] : undefined
                 return (
-                  <div key={t.id} className="rounded-lg border border-border bg-surface-secondary px-3 py-2.5">
+                  <div key={t.id} className={`px-4 py-4 ${WORKSPACE_CARD_CLASS}`}>
                     <div className="flex items-start justify-between gap-3">
                       <button
                         onClick={() => setOpenTaskId(openTaskId === t.id ? null : t.id)}
@@ -381,7 +385,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                       </button>
                       <StatusBadge label={t.status} tone={TASK_TONE[t.status]} />
                     </div>
-                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] text-muted-foreground">
+                    <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 font-mono text-[11px] leading-5 text-muted-foreground">
                       <span>priority: {t.priority}</span>
                       <span>
                         agent:{' '}
@@ -422,7 +426,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                       </div>
                     )}
                     {validation && (
-                      <div className="mt-2 border-t border-border pt-2 font-mono text-[10px]">
+                      <div className="mt-3 border-t border-border/30 pt-3 font-mono text-[11px] leading-5">
                         <span className={validation.passed ? 'text-primary' : 'text-red-400'}>
                           validation {validation.passed ? 'passed' : 'failed'}
                         </span>
@@ -449,9 +453,9 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
       </div>
 
       {/* ── Agent roster ───────────────────────────────────────── */}
-      <section className="mt-10">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="flex items-center gap-2 font-mono text-xs uppercase tracking-wide text-muted-foreground">
+      <section className="mt-14">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 font-mono text-sm uppercase tracking-wide leading-6 text-muted-foreground">
             <Server className="h-3.5 w-3.5" />
             agent roster ({agents.length})
           </h2>
@@ -460,7 +464,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
               setEditing(null)
               setHiring((v) => !v)
             }}
-            className="inline-flex items-center gap-1.5 rounded border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-mono text-xs text-primary transition-colors hover:bg-primary/20"
+            className="inline-flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 font-mono text-xs leading-5 text-primary shadow-sm ring-1 ring-primary/15 transition-colors hover:bg-primary/15"
           >
             <Plus className="h-3 w-3" />
             hire worker
@@ -485,34 +489,34 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
             onSaved={loadList}
           />
         )}
-        <div className="overflow-x-auto rounded-lg border border-border bg-surface-secondary">
+        <div className={`overflow-x-auto p-2 ${WORKSPACE_CARD_CLASS}`}>
           <table className="w-full min-w-[720px] text-left">
             <thead>
-              <tr className="border-b border-border font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-3 py-2">agent</th>
-                <th className="px-3 py-2">layer</th>
-                <th className="px-3 py-2">cli command</th>
-                <th className="px-3 py-2">state</th>
-                <th className="px-3 py-2">instructions</th>
-                <th className="px-3 py-2">detected</th>
+              <tr className="border-b border-border/30 font-mono text-[11px] uppercase tracking-wide leading-5 text-muted-foreground">
+                <th className="px-4 py-3">agent</th>
+                <th className="px-4 py-3">layer</th>
+                <th className="px-4 py-3">cli command</th>
+                <th className="px-4 py-3">state</th>
+                <th className="px-4 py-3">instructions</th>
+                <th className="px-4 py-3">detected</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody>
               {agents.map((a) => (
-                <tr key={a.id} className="border-b border-border/50 last:border-0">
-                  <td className="px-3 py-2 font-mono text-xs text-foreground">{a.name}</td>
-                  <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">
+                <tr key={a.id} className="border-b border-border/25 last:border-0">
+                  <td className="px-4 py-3 font-mono text-xs text-foreground">{a.name}</td>
+                  <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground">
                     {a.layer} · {AGENT_LAYER_LABELS[a.layer]}
                   </td>
-                  <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">{a.cliCommand ?? '—'}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground">{a.cliCommand ?? '—'}</td>
+                  <td className="px-4 py-3">
                     <StatusBadge
                       label={a.enabled ? 'enabled' : 'disabled'}
                       tone={a.enabled ? 'primary' : 'neutral'}
                     />
                   </td>
-                  <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">
+                  <td className="px-4 py-3 font-mono text-[10px] text-muted-foreground">
                     {a.instructions ? (
                       <span className="text-foreground" title={a.instructions}>
                         {a.instructions.length > 40 ? `${a.instructions.slice(0, 40)}…` : a.instructions}
@@ -521,7 +525,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                       '—'
                     )}
                   </td>
-                  <td className="px-3 py-2 font-mono text-[10px]">
+                  <td className="px-4 py-3 font-mono text-[10px]">
                     {/* Never checked and checked-and-absent are different
                         facts, and conflating them is what let a disabled,
                         uninstalled Codex look dispatchable for two batches. */}
@@ -541,7 +545,7 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                     {/* Only agents with a CLI can be chatted with — the
                         orchestrators and validators have nothing to run. */}

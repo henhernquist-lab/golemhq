@@ -5,11 +5,9 @@
 // Forge's Chat / Terminals sub-switcher, which were the same markup with
 // slightly different numbers on each.
 //
-// The two sizes are now deliberate variants rather than two independent sets
-// of magic values. Phase 1 ships no visual change, so `primary` and `sub`
-// reproduce the existing pixel values exactly (11px/px-2.5/gap-1.5 vs
-// 10px/px-2/gap-1) — collapsing them to one size is a visual decision for the
-// later colour/motion pass, not a de-duplication one.
+// The two sizes remain deliberate variants rather than independent strips.
+// Phase 2 softens both consistently: roomier hit areas, quieter separators,
+// and a restrained active highlight instead of an accent outline.
 //
 // Note for callers: this renders the bar only. Panels stay mounted and
 // CSS-hidden at the call site so live state (terminals, chat) survives a tab
@@ -27,13 +25,13 @@ export interface TabStripItem<T extends string> {
 
 const SIZES = {
   primary: {
-    container: 'flex h-9 flex-shrink-0 items-center gap-0.5 border-b border-border bg-surface-secondary px-3',
-    button: 'flex items-center gap-1.5 rounded px-2.5 py-1 font-mono text-[11px] transition-colors',
+    container: 'flex h-12 flex-shrink-0 items-center gap-1 border-b border-border/50 bg-surface-secondary/70 px-5 shadow-sm',
+    button: 'flex items-center gap-2 rounded-lg px-3.5 py-2 font-mono text-xs leading-5 transition-colors',
     icon: 'h-3 w-3',
   },
   sub: {
-    container: 'flex items-center gap-0.5 rounded border border-border bg-surface-secondary p-0.5',
-    button: 'flex items-center gap-1 rounded px-2 py-1 font-mono text-[10px] transition-colors',
+    container: 'flex items-center gap-1 rounded-xl border border-border/50 bg-surface-secondary/70 p-1 shadow-sm',
+    button: 'flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-mono text-[11px] leading-4 transition-colors',
     icon: 'h-3 w-3',
   },
 } as const
@@ -65,7 +63,9 @@ export function TabStrip<T extends string>({
             onClick={() => onSelect(item.id)}
             title={item.title}
             className={`${s.button} ${
-              active === item.id ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+              active === item.id
+                ? 'bg-primary/10 text-primary shadow-sm'
+                : 'text-muted-foreground hover:bg-surface-elevated/60 hover:text-foreground'
             }`}
           >
             <Icon className={s.icon} /> {item.label}

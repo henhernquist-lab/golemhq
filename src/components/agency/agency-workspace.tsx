@@ -30,7 +30,12 @@ import {
 
 import { HireWorkerPanel, type EditableAgent } from '@/components/missions/hire-worker'
 import { AgentChatPanel } from '@/components/missions/agent-chat-panel'
-import { WorkspaceShell } from '@/components/workspace/workspace-shell'
+import { OrgChart, type ParentRelation } from '@/components/agency/org-chart'
+import {
+  WORKSPACE_CARD_CLASS,
+  WORKSPACE_INSET_CLASS,
+  WorkspaceShell,
+} from '@/components/workspace/workspace-shell'
 import { StatusBadge, type BadgeTone } from '@/components/workspace/status-badge'
 import { AGENT_LAYER_LABELS, AGENT_LAYERS, type Agent, type AgentLayer } from '@/lib/missions/types'
 import { listModels } from '@/lib/nim'
@@ -113,9 +118,10 @@ function AuditBadge({ agent, busy, onRun }: { agent: AgencyAgent; busy: boolean;
 }
 
 function AgentCard({
-  agent, auditing, onToggleEnabled, onEdit, onChat, onAudit, onChangeModel,
+  agent, relation, auditing, onToggleEnabled, onEdit, onChat, onAudit, onChangeModel,
 }: {
   agent: AgencyAgent
+  relation: ParentRelation<AgencyAgent>
   auditing: boolean
   onToggleEnabled: () => void
   onEdit: () => void
@@ -124,12 +130,12 @@ function AgentCard({
   onChangeModel: (model: string | null) => void
 }) {
   return (
-    <div className="w-64 rounded-lg border border-border bg-surface-secondary p-3">
-      <div className="flex items-start justify-between gap-2">
+    <div className={`w-72 p-4 ${WORKSPACE_CARD_CLASS}`}>
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-mono text-xs text-foreground">{agent.name}</p>
+          <p className="truncate font-mono text-sm leading-5 text-foreground">{agent.name}</p>
           {agent.cliCommand && (
-            <p className="truncate font-mono text-[9px] text-muted-foreground" title={agent.cliCommand}>
+            <p className="truncate font-mono text-[10px] leading-4 text-muted-foreground" title={agent.cliCommand}>
               {agent.cliCommand}
             </p>
           )}
@@ -137,15 +143,17 @@ function AgentCard({
         <button
           onClick={onToggleEnabled}
           title={agent.enabled ? 'pause — sets enabled=false, Scheduler will not dispatch to it' : 'resume — sets enabled=true'}
-          className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded border transition-colors ${
-            agent.enabled ? 'border-primary/40 bg-primary/10 text-primary hover:bg-primary/20' : 'border-border text-muted-foreground hover:text-foreground'
+          className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg transition-colors shadow-sm ring-1 ${
+            agent.enabled
+              ? 'bg-primary/10 text-primary ring-primary/20 hover:bg-primary/15'
+              : 'bg-surface-elevated/60 text-muted-foreground ring-foreground/10 hover:text-foreground'
           }`}
         >
           {agent.enabled ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
         </button>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <StatusBadge
           tone={agent.enabled ? 'primaryOutline' : 'neutral'}
           size="sm"
@@ -155,19 +163,35 @@ function AgentCard({
       </div>
 
       {agent.detection && (
-        <p className="mt-1.5 font-mono text-[9px] text-muted-foreground">
+        <p className="mt-2 font-mono text-[10px] leading-4 text-muted-foreground">
           {agent.detection.cliPath ? `detected on ${agent.detection.detectedHost}` : `absent on ${agent.detection.detectedHost}`}
         </p>
       )}
 
-      <div className="mt-2">
-        <label className="flex flex-col gap-1">
-          <span className="font-mono text-[9px] uppercase tracking-wider text-muted-foreground/60">model</span>
+      {relation.kind === 'missing-parent' && (
+        <p className="mt-3 font-mono text-[10px] leading-4 text-warning" data-parent-warning>
+          parent unavailable · showing as root
+        </p>
+      )}
+      {relation.kind === 'unexpected-layer' && relation.parent && (
+        <p className="mt-3 font-mono text-[10px] leading-4 text-muted-foreground" data-parent-warning>
+          cross-layer parent · layer {relation.parent.layer}
+        </p>
+      )}
+      {relation.kind === 'self-parent' && (
+        <p className="mt-3 font-mono text-[10px] leading-4 text-warning" data-parent-warning>
+          invalid self-parent · showing as root
+        </p>
+      )}
+
+      <div className="mt-4">
+        <label className="flex flex-col gap-1.5">
+          <span className="font-mono text-[10px] uppercase tracking-wider leading-4 text-muted-foreground">model</span>
           {agent.layer === 2 && agent.cliCommand ? (
             <select
               value={agent.model ?? ''}
               onChange={(e) => onChangeModel(e.target.value || null)}
-              className="w-full rounded border border-border bg-surface-base px-1.5 py-1 font-mono text-[10px] text-foreground outline-none focus:border-primary/50"
+              className="w-full rounded-lg border border-border/50 bg-surface-base px-2 py-1.5 font-mono text-[10px] leading-4 text-foreground shadow-sm outline-none focus:border-primary/40"
             >
               <option value="">CLI default</option>
               {MODEL_OPTIONS.map((m) => (
@@ -179,7 +203,7 @@ function AgentCard({
               disabled
               value=""
               title="Logic modules don't run a CLI, so there is no model to assign"
-              className="w-full cursor-not-allowed rounded border border-border bg-surface-base px-1.5 py-1 font-mono text-[10px] text-muted-foreground/50 outline-none"
+              className="w-full cursor-not-allowed rounded-lg border border-border/40 bg-surface-base px-2 py-1.5 font-mono text-[10px] leading-4 text-muted-foreground/50 shadow-sm outline-none"
             >
               <option value="">logic · no CLI</option>
             </select>
@@ -187,13 +211,13 @@ function AgentCard({
         </label>
       </div>
 
-      <div className="mt-2.5 flex items-center gap-3 border-t border-border/60 pt-2">
+      <div className="mt-4 flex items-center gap-4 border-t border-border/40 pt-3">
         {agent.cliCommand && (
-          <button onClick={onChat} className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground transition-colors hover:text-primary">
+          <button onClick={onChat} className="inline-flex items-center gap-1 font-mono text-[11px] leading-5 text-muted-foreground transition-colors hover:text-primary">
             <MessageSquare className="h-3 w-3" /> chat
           </button>
         )}
-        <button onClick={onEdit} className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground transition-colors hover:text-primary">
+        <button onClick={onEdit} className="inline-flex items-center gap-1 font-mono text-[11px] leading-5 text-muted-foreground transition-colors hover:text-primary">
           <Pencil className="h-3 w-3" /> edit
         </button>
       </div>
@@ -314,13 +338,13 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
         <>
           <button
             onClick={() => { setEditing(null); setHiring((v) => !v) }}
-            className="inline-flex items-center gap-1.5 rounded border border-primary/40 bg-primary/10 px-2.5 py-1.5 font-mono text-xs text-primary transition-colors hover:bg-primary/20"
+            className="inline-flex items-center gap-2 rounded-lg bg-primary/10 px-3 py-2 font-mono text-xs leading-5 text-primary shadow-sm ring-1 ring-primary/15 transition-colors hover:bg-primary/15"
           >
             <Plus className="h-3 w-3" /> hire worker
           </button>
           <button
             onClick={load}
-            className="inline-flex items-center gap-2 rounded border border-border px-2.5 py-1.5 font-mono text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+            className="inline-flex items-center gap-2 rounded-lg bg-surface-secondary px-3 py-2 font-mono text-xs leading-5 text-muted-foreground shadow-sm ring-1 ring-foreground/10 transition-colors hover:bg-surface-elevated/70 hover:text-primary"
           >
             <RefreshCw className="h-3 w-3" /> refresh
           </button>
@@ -328,7 +352,7 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
       }
     >
       {error && (
-        <div className="mb-6 rounded border border-warning/40 bg-warning/10 px-3 py-2 font-mono text-xs text-warning">{error}</div>
+        <div className="mb-8 rounded-xl bg-warning/10 px-4 py-3 font-mono text-xs leading-5 text-warning shadow-sm ring-1 ring-warning/20">{error}</div>
       )}
 
       {chatAgent && <AgentChatPanel key={chatAgent.id} agent={chatAgent} onClose={() => setChatAgent(null)} />}
@@ -342,56 +366,43 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
 
       {loading && agents.length === 0 && <p className="font-mono text-xs text-muted-foreground">loading…</p>}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* ── Org chart ────────────────────────────────────────── */}
-        <section className="space-y-6">
-          {AGENT_LAYERS.map((layer) => {
-            const layerAgents = agents.filter((a) => a.layer === layer)
-            return (
-              <div key={layer}>
-                <div className="mb-2 flex items-baseline gap-2">
-                  <h2 className="font-mono text-xs uppercase tracking-wide text-foreground">
-                    layer {layer} · {AGENT_LAYER_LABELS[layer]}
-                  </h2>
-                  <span className="font-mono text-[10px] text-muted-foreground">{LAYER_DESC[layer]}</span>
-                </div>
-                {layerAgents.length === 0 ? (
-                  <p className="font-mono text-[10px] text-muted-foreground">no agents registered at this layer</p>
-                ) : (
-                  <div className="flex flex-wrap gap-3">
-                    {layerAgents.map((a) => (
-                      <AgentCard
-                        key={a.id}
-                        agent={a}
-                        auditing={auditingId === a.id}
-                        onToggleEnabled={() => toggleEnabled(a)}
-                        onAudit={() => runAudit(a)}
-                        onEdit={() => {
-                          setHiring(false); setChatAgent(null)
-                          setEditing({ id: a.id, name: a.name, layer: a.layer, cliCommand: a.cliCommand, enabled: a.enabled, instructions: a.instructions })
-                        }}
-                        onChat={() => {
-                          setHiring(false); setEditing(null)
-                          setChatAgent({ id: a.id, name: a.name, cliCommand: a.cliCommand })
-                        }}
-                        onChangeModel={(m) => changeModel(a, m)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
+        <section>
+          <OrgChart
+            agents={agents}
+            layers={AGENT_LAYERS}
+            layerLabels={AGENT_LAYER_LABELS}
+            layerDescriptions={LAYER_DESC}
+            renderCard={(a, relation) => (
+              <AgentCard
+                agent={a}
+                relation={relation}
+                auditing={auditingId === a.id}
+                onToggleEnabled={() => toggleEnabled(a)}
+                onAudit={() => runAudit(a)}
+                onEdit={() => {
+                  setHiring(false); setChatAgent(null)
+                  setEditing({ id: a.id, name: a.name, layer: a.layer, cliCommand: a.cliCommand, enabled: a.enabled, instructions: a.instructions })
+                }}
+                onChat={() => {
+                  setHiring(false); setEditing(null)
+                  setChatAgent({ id: a.id, name: a.name, cliCommand: a.cliCommand })
+                }}
+                onChangeModel={(m) => changeModel(a, m)}
+              />
+            )}
+          />
         </section>
 
         {/* ── Live activity feed ──────────────────────────────── */}
         <section>
-          <h2 className="mb-2 flex items-center gap-1.5 font-mono text-xs uppercase tracking-wide text-foreground">
+          <h2 className="mb-4 flex items-center gap-2 font-mono text-sm uppercase tracking-wide leading-6 text-foreground">
             <Terminal className="h-3.5 w-3.5" /> activity
           </h2>
-          <div className="max-h-[70vh] overflow-y-auto rounded-lg border border-border bg-surface-secondary">
+          <div className={`max-h-[70vh] overflow-y-auto p-2 ${WORKSPACE_INSET_CLASS}`}>
             {activity.length === 0 ? (
-              <p className="px-2 py-3 font-mono text-[10px] text-muted-foreground">no mission activity yet</p>
+              <p className="px-3 py-4 font-mono text-[11px] leading-5 text-muted-foreground">no mission activity yet</p>
             ) : (
               activity.map((e) => <ActivityRow key={e.id} event={e} agentName={agentName} />)
             )}

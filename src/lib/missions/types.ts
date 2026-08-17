@@ -30,7 +30,7 @@ export interface Agent {
   reliabilityPct: number | null
   contextWindow: number | null
   enabled: boolean
-  /** Org-chart placement. Unused until Batch 8. */
+  /** Org-chart placement; null means this agent is a root/orphan node. */
   parentId: string | null
   createdAt: string
 }

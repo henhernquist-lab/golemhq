@@ -12,10 +12,9 @@ const PASSWORD = process.env.E2E_PASSWORD
 test.describe('agency tab', () => {
   test.skip(!EMAIL || !PASSWORD, 'Set E2E_EMAIL and E2E_PASSWORD to run the Agency tab test.')
 
-  test('renders the org chart from real agents, not mock data', async ({ page }) => {
+  test('renders the org chart from real agents, not mock data', async ({ page }, testInfo) => {
     await page.goto('/login')
     await page.getByRole('button', { name: 'email', exact: true }).click()
-    await page.locator('button[type="button"]', { hasText: /^sign in$/ }).first().click()
     await page.getByPlaceholder('email').fill(EMAIL!)
     await page.getByPlaceholder('password').fill(PASSWORD!)
     await page.locator('button[type="submit"]').click()
@@ -35,6 +34,12 @@ test.describe('agency tab', () => {
 
     // The real cli_command string — a mock would not know the exact flags.
     await expect(page.getByText(/claude --permission-mode acceptEdits/)).toBeVisible()
+    await expect(page.locator('[data-org-chart]')).toBeVisible()
+    await expect(page.locator('[data-org-chart-node]')).not.toHaveCount(0)
+    await testInfo.attach('phase2-after-smoothing', {
+      body: await page.screenshot({ fullPage: true }),
+      contentType: 'image/png',
+    })
 
     // Pause/resume is a real control, not decorative — toggling flips the
     // active/paused badge via a genuine PATCH round trip.

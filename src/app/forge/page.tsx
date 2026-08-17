@@ -1095,7 +1095,7 @@ USER REQUEST: ${userText}`
 
       <div className={`flex min-h-0 flex-1 flex-col ${primaryTab === 'forge' ? '' : 'hidden'}`}>
       {/* Top bar */}
-      <header className="flex h-10 flex-shrink-0 items-center gap-3 border-b border-border bg-background px-4">
+      <header className="flex h-12 flex-shrink-0 items-center gap-4 border-b border-border/50 bg-surface-base/90 px-5 shadow-sm">
         <Link href="/" className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground">
           <ArrowLeft className="h-3 w-3" /> Home
         </Link>
@@ -1170,7 +1170,7 @@ USER REQUEST: ${userText}`
       {/* Body */}
       <div className="flex min-h-0 flex-1">
         {/* Sidebar */}
-        <aside className="flex w-[240px] flex-shrink-0 flex-col border-r border-border bg-[#0a0b0d]">
+        <aside className="flex w-[240px] flex-shrink-0 flex-col border-r border-border/50 bg-surface-secondary shadow-sm">
           <div className="border-b border-border p-3">
             <div className="flex items-center gap-1.5">
               <Folder className="h-3 w-3 text-muted-foreground" />
