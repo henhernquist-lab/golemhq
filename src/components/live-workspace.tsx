@@ -39,6 +39,9 @@ export function LiveWorkspace({ pollUrl, hidden, onFinished, controlUrl, control
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const finishedRef = useRef(false)
+  // Latest poll closure, read from the interval so it never goes stale even if
+  // the caller recreates `onFinished` between renders.
+  const pollRef = useRef<() => Promise<void>>(async () => {})
 
   const sendControl = useCallback(async (signal: 'pause' | 'cancel' | '') => {
     if (!controlUrl || !controlId) return
@@ -89,15 +92,31 @@ export function LiveWorkspace({ pollUrl, hidden, onFinished, controlUrl, control
     }
   }, [pollUrl, onFinished])
 
+  // Keep the interval's view of `poll` current without touching the ref during
+  // render (the lint rule forbids it). Runs before the polling effect below, so
+  // the interval never holds a stale closure.
   useEffect(() => {
-    if (!pollUrl) return
-    finishedRef.current = false
+    pollRef.current = poll
+  }, [poll])
+
+  // Reset the view when switching to a different run. Done during render (the
+  // React-sanctioned pattern) rather than in an effect, so the old run's steps
+  // are never shown against the new run's status and the lint rule isn't
+  // tripped by synchronous setState inside the effect.
+  const [prevPollUrl, setPrevPollUrl] = useState(pollUrl)
+  if (prevPollUrl !== pollUrl) {
+    setPrevPollUrl(pollUrl)
     setSteps([])
     setStatus(null)
     setConnecting(true)
     setStale(false)
-    poll()
-    timerRef.current = setInterval(poll, POLL_MS)
+  }
+
+  useEffect(() => {
+    if (!pollUrl) return
+    finishedRef.current = false
+    pollRef.current()
+    timerRef.current = setInterval(() => pollRef.current(), POLL_MS)
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
     }

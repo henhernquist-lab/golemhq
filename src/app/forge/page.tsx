@@ -16,7 +16,7 @@ import { DriveTerminalWorkspace, type DriveTerminalWorkspaceHandle } from '@/com
 import { SkillFeedbackBar } from '@/components/skill-feedback-bar'
 import { ThinkingTrace } from '@/components/thinking-trace'
 import { CompactionIndicator } from '@/components/compaction-indicator'
-import { SKILLS as ALL_SKILLS, detectSkillInvocation, detectSkillInvocations, buildMultiSkillPrompt } from '@/lib/skills/registry'
+import { SKILLS as ALL_SKILLS, detectSkillInvocation, buildMultiSkillPrompt } from '@/lib/skills/registry'
 import { classifyTaskComplexity, autoSelectForComplexity } from '@/lib/drive/auto-select'
 import { DriveSteps, type DriveStep } from '@/components/drive-steps'
 import { RouterExplanation } from '@/components/router/router-explanation'
@@ -244,15 +244,24 @@ function DiffBlock({ diffText }: { diffText: string }) {
 
 // ─── Deep reasoning step list ───────────────────────────────
 
+const DEEP_REASONING_STEPS = ['Reading file', 'Analyzing structure', 'Considering approaches', 'Planning changes', 'Generating diff']
+
 function DeepReasoningIndicator({ running }: { running: boolean }) {
-  const steps = ['Reading file', 'Analyzing structure', 'Considering approaches', 'Planning changes', 'Generating diff']
   const [step, setStep] = useState(0)
 
+  // Reset the step counter when a run ends (the component renders null while
+  // stopped, but stays mounted). Done during render, not in an effect, so the
+  // reset doesn't trigger the cascading-render lint rule.
+  const [prevRunning, setPrevRunning] = useState(running)
+  if (running !== prevRunning) {
+    setPrevRunning(running)
+    if (!running) setStep(0)
+  }
+
   useEffect(() => {
-    if (!running) { setStep(0); return }
-    const i = setInterval(() => setStep((s) => (s + 1) % steps.length), 1800)
+    if (!running) return
+    const i = setInterval(() => setStep((s) => (s + 1) % DEEP_REASONING_STEPS.length), 1800)
     return () => clearInterval(i)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running])
 
   if (!running) return null
@@ -264,7 +273,7 @@ function DeepReasoningIndicator({ running }: { running: boolean }) {
         <span className="font-mono text-[10px] uppercase tracking-wider text-primary/50">Extended reasoning</span>
       </div>
       <div className="space-y-1 mt-2">
-        {steps.map((s, i) => (
+        {DEEP_REASONING_STEPS.map((s, i) => (
           <div key={s} className="flex items-center gap-2">
             <span className={`font-mono text-[9px] ${
               i < step ? 'text-primary' : i === step ? 'text-muted-foreground/60' : 'text-muted-foreground/25'
@@ -358,7 +367,6 @@ export default function AgentPage() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [currentBranch, setCurrentBranch] = useState<string | null>(null)
   const [hasPendingDiff, setHasPendingDiff] = useState(false)
-  const [thinkingCollapsed, setThinkingCollapsed] = useState(false)
 
   // File tree state
   const [filePaths, setFilePaths] = useState<string[]>([])
@@ -513,12 +521,22 @@ export default function AgentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Reset the file tree when the repo/branch changes. Done during render (the
+  // React-sanctioned pattern) rather than in the effect, so a stale tree is
+  // never shown for a new repo and the lint rule isn't tripped by a
+  // synchronous setState inside the effect.
+  const [prevTreeKey, setPrevTreeKey] = useState('')
+  const treeKey = `${repo ?? ''}:${currentBranch ?? ''}`
+  if (treeKey !== prevTreeKey) {
+    setPrevTreeKey(treeKey)
+    setFilePaths([])
+    setExpandedDirs(new Set())
+    setLoadingTree(true)
+  }
+
   // Load file tree when repo changes
   useEffect(() => {
     if (!repo || !selectedRepo) return
-    setLoadingTree(true)
-    setFilePaths([])
-    setExpandedDirs(new Set())
     fetch('/api/terminal/tree', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -649,7 +667,6 @@ export default function AgentPage() {
         return
       }
       setRunning(true)
-      setThinkingCollapsed(false)
       const controller = new AbortController()
       abortRef.current = controller
       try {

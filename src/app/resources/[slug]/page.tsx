@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import Link from 'next/link'
@@ -18,7 +18,6 @@ import {
   Newspaper,
   Check,
   Timer,
-  ScanSearch,
   ShieldAlert,
   Info,
   ExternalLink,
@@ -35,7 +34,6 @@ import { BellSchedule } from '@/components/tools/bell-schedule'
 import {
   type Resource,
   type ResourceType,
-  type FlashcardsPayload,
   type GradeCalcPayload,
   type RepoScanPayload,
   type PromptPayload,
@@ -91,11 +89,6 @@ function timeAgo(iso: string): string {
     return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
   return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function shortDate(iso: string): string {
-  if (!iso) return ''
-  return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
 /* ─── DetailModal + PayloadView (from old resources page) */

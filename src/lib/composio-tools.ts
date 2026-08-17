@@ -15,7 +15,7 @@
 // executeTool path, and we choose which actions to expose based on what's
 // genuinely useful vs. what would just add latency/noise to the tool list.
 
-import { tool } from 'ai'
+import { tool, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { supabase } from '@/lib/supabase'
 import { executeTool, type ComposioToolkit, type ComposioConnectable } from '@/lib/composio'
@@ -80,8 +80,7 @@ async function wrapTool(args: {
   maxStringChars?: number
   /** Ceiling across the whole result. */
   maxTotalChars?: number
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-}): Promise<Record<string, any> | null> {
+}): Promise<ToolSet | null> {
   return {
     [args.toolKey]: tool({
       description: args.description,
@@ -126,13 +125,12 @@ async function wrapTool(args: {
 // the user's connections on demand, only attaches tools for toolkits where the
 // user is actually connected (no point handing the model a tool that would
 // just fail-401 on execute). Returns {} for focus modes that disallow composio.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function buildComposioTools(
   uid: string | null,
   focusMode: FocusMode,
   /** Per-model total char budget for one tool result (see ModelMeta.toolResultMaxChars). */
   resultBudgetChars?: number,
-): Promise<Record<string, any>> {
+): Promise<ToolSet> {
   if (!uid) return {}
   if (!FOCUS_ALLOWS[focusMode]) return {}
 
@@ -144,8 +142,7 @@ export async function buildComposioTools(
   const docCaps = { maxTotalChars, maxStringChars: maxTotalChars }
 
   const connections = await loadConnections(uid)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tools: Record<string, any> = {}
+  const tools: ToolSet = {}
   // loadConnections returns composio_connected_account_id per toolkit, but the
   // SDK doesn't need that ID at execute time — it resolves the connected
   // account internally from the (userId, authConfigId) pair registered during
