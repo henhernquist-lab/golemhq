@@ -8,7 +8,16 @@
 //
 // Portal URL: https://ic.apsk12.org/campus/portal/students/atlanta.jsp
 
-import { chromium, Browser, Page } from 'playwright'
+// Playwright is a devDependency and is NOT installed in the deployed bundle.
+// A static `import … from 'playwright'` here therefore resolved fine in dev and
+// during the build, then failed at cold start in production with
+// "Can't resolve 'playwright'" — taking down the whole module graph of every
+// route that imported this file. /api/chat and /api/school both did, which is
+// why both returned Next's raw HTML 500 for every method, before any handler
+// code ran. Type-only imports are erased at compile time and are safe; the
+// runtime import must stay lazy, inside the one function that launches a
+// browser, so importing this module costs nothing.
+import type { Browser, Page } from 'playwright'
 import { supabase } from '@/lib/supabase'
 import { decrypt } from '@/lib/crypto'
 
@@ -34,8 +43,23 @@ export interface ICAnnouncement {
 
 let _browser: Browser | null = null
 
+/**
+ * Scraping is only possible where Playwright and a browser binary exist — a
+ * real machine, not the serverless bundle. The import is deferred to here and
+ * its failure is reported as a normal error string, so a caller on Vercel gets
+ * "unavailable" instead of an unhandled module-resolution crash.
+ */
 async function getBrowser(): Promise<Browser> {
   if (_browser?.isConnected()) return _browser
+  let chromium: typeof import('playwright').chromium
+  try {
+    ({ chromium } = await import('playwright'))
+  } catch {
+    throw new Error(
+      'Infinite Campus scraping is unavailable in this environment: Playwright is not installed. ' +
+        'It runs only where a browser binary is available, not on the serverless deployment.',
+    )
+  }
   _browser = await chromium.launch({ headless: true })
   return _browser
 }

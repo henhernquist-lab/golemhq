@@ -122,7 +122,7 @@ export function OrgChart<T extends Agent>({
     <div ref={chartRef} className="relative" data-org-chart>
       <svg
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 z-0 h-full w-full overflow-visible text-foreground/25"
+        className="pointer-events-none absolute inset-0 z-0 h-full w-full overflow-visible text-primary"
         data-org-chart-connectors
       >
         {connectors.map((connector) => (
@@ -133,7 +133,7 @@ export function OrgChart<T extends Agent>({
             stroke="currentColor"
             strokeDasharray={connector.unexpectedLayer ? '5 5' : undefined}
             strokeLinecap="round"
-            strokeOpacity={connector.unexpectedLayer ? 0.35 : 0.3}
+            strokeOpacity={connector.unexpectedLayer ? 0.4 : 0.55}
             strokeWidth="2.5"
             data-org-connector
             data-child-id={connector.childId}

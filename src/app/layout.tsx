@@ -46,7 +46,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#1a1614',
+  themeColor: '#0e1012',
   width: 'device-width',
   initialScale: 1,
 }
@@ -65,8 +65,10 @@ export default async function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `try {
               const theme = localStorage.getItem('enry-theme');
-              if (theme === 'light') document.documentElement.setAttribute('data-theme', 'light');
-              else if (theme === 'midnight') document.documentElement.setAttribute('data-theme', 'midnight');
+              // Graphite dark is the :root default; 'og' (old default) and 'light'
+              // (old theme) both migrate forward rather than rendering stale.
+              if (theme === 'midnight') document.documentElement.setAttribute('data-theme', 'midnight');
+              else if (theme === 'light' || theme === 'graphite-light') document.documentElement.setAttribute('data-theme', 'graphite-light');
               else document.documentElement.removeAttribute('data-theme');
             } catch (e) {}`,
           }}

@@ -38,7 +38,7 @@ const DESCRIPTIONS: Record<string, string> = {
   '/settings': 'Manage your account and integrations',
 }
 
-type Theme = 'og' | 'midnight' | 'light'
+type Theme = 'graphite' | 'midnight' | 'graphite-light'
 
 function openCommandPalette() {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))
@@ -46,7 +46,8 @@ function openCommandPalette() {
 
 function setTheme(theme: Theme) {
   const root = document.documentElement
-  if (theme === 'og') {
+  if (theme === 'graphite') {
+    // Graphite dark is the :root default — no attribute, same as OG used to be.
     root.removeAttribute('data-theme')
   } else {
     root.setAttribute('data-theme', theme)
@@ -61,16 +62,20 @@ export function TopBar() {
 
   const [langOpen, setLangOpen] = useState(false)
   const [themeOpen, setThemeOpen] = useState(false)
-  const [theme, setThemeState] = useState<Theme>('og')
+  const [theme, setThemeState] = useState<Theme>('graphite')
   const langRef = useRef<HTMLDivElement>(null)
   const themeRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('enry-theme') as Theme | null
-      if (saved && ['og', 'midnight', 'light'].includes(saved)) {
-        setThemeState(saved)
-        setTheme(saved)
+      const saved = localStorage.getItem('enry-theme')
+      // 'og' and 'light' are pre-collapse values; both migrate forward — 'og'
+      // resolves to the :root default (Graphite dark), 'light' to Graphite Light.
+      const migrated: Theme | null =
+        saved === 'light' ? 'graphite-light' : saved === 'og' ? 'graphite' : (saved as Theme | null)
+      if (migrated && ['graphite', 'midnight', 'graphite-light'].includes(migrated)) {
+        setThemeState(migrated)
+        setTheme(migrated)
       }
     } catch { /* noop */ }
   }, [])
@@ -179,9 +184,9 @@ export function TopBar() {
                 Theme
               </div>
               {([
-                { id: 'og', label: 'OG', icon: Zap },
+                { id: 'graphite', label: 'Graphite', icon: Zap },
                 { id: 'midnight', label: 'Midnight', icon: Moon },
-                { id: 'light', label: 'Light', icon: Sun },
+                { id: 'graphite-light', label: 'Graphite Light', icon: Sun },
               ] as const).map((t) => (
                 <button
                   key={t.id}

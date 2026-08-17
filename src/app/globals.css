@@ -4,55 +4,57 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Golem — Grimoire × Clay & Stone (warm-dark illuminated-manuscript) */
-  --background: #1a1614;
-  --foreground: #f5f0e8;
-  --card: #1f1a17;
-  --card-foreground: #f5f0e8;
-  --popover: #1f1a17;
-  --popover-foreground: #f5f0e8;
-  --primary: #b8935a;
-  --primary-foreground: #1a1614;
-  --primary-dim: #9a7d4a;
-  --secondary: #25201c;
-  --secondary-foreground: #f5f0e8;
-  --muted: #25201c;
-  --muted-foreground: #a89880;
-  --accent: #a85c3f;
-  --accent-foreground: #f5f0e8;
-  --destructive: #c44d4d;
-  --destructive-foreground: #f5f0e8;
-  --warning: #d4a83c;
-  --warning-foreground: #1a1614;
-  --border: #2d2824;
-  --input: #25201c;
-  --ring: #b8935a;
+  /* Golem HQ — Graphite (monochrome base, cyan is the single accent).
+     This is the default theme: no [data-theme] attribute = Graphite dark.
+     Midnight (unchanged) and Graphite Light are explicit attributes. */
+  --background: #0e1012;
+  --foreground: #f2f5f7;
+  --card: #14171b;
+  --card-foreground: #f2f5f7;
+  --popover: #14171b;
+  --popover-foreground: #f2f5f7;
+  --primary: #22d3ee;
+  --primary-foreground: #04222a;
+  --primary-dim: #0e7490;
+  --secondary: #1a1e24;
+  --secondary-foreground: #f2f5f7;
+  --muted: #1a1e24;
+  --muted-foreground: #8b949e;
+  --accent: #22d3ee;
+  --accent-foreground: #04222a;
+  --destructive: #f87171;
+  --destructive-foreground: #0e1012;
+  --warning: #ffb800;
+  --warning-foreground: #0e1012;
+  --border: #262b31;
+  --input: #1a1e24;
+  --ring: #22d3ee;
   --radius: 0.375rem;
 
   /* Surface levels */
-  --surface-base: #1a1614;
-  --surface-secondary: #1f1a17;
-  --surface-elevated: #25201c;
+  --surface-base: #0e1012;
+  --surface-secondary: #14171b;
+  --surface-elevated: #1a1e24;
 
   /* Chart colors */
-  --chart-1: #b8935a;
-  --chart-2: #a85c3f;
-  --chart-3: #d4a83c;
-  --chart-4: #c44d4d;
-  --chart-5: #a89880;
+  --chart-1: #22d3ee;
+  --chart-2: #0e7490;
+  --chart-3: #67e8f9;
+  --chart-4: #8b949e;
+  --chart-5: #f2f5f7;
 
   /* Sidebar */
-  --sidebar: #1f1a17;
-  --sidebar-foreground: #f5f0e8;
-  --sidebar-primary: #b8935a;
-  --sidebar-primary-foreground: #1a1614;
-  --sidebar-accent: #25201c;
-  --sidebar-accent-foreground: #f5f0e8;
-  --sidebar-border: #2d2824;
-  --sidebar-ring: #b8935a;
+  --sidebar: #14171b;
+  --sidebar-foreground: #f2f5f7;
+  --sidebar-primary: #22d3ee;
+  --sidebar-primary-foreground: #04222a;
+  --sidebar-accent: #1a1e24;
+  --sidebar-accent-foreground: #f2f5f7;
+  --sidebar-border: #262b31;
+  --sidebar-ring: #22d3ee;
 
   /* Grid line */
-  --grid-line: rgba(45, 40, 36, 0.3);
+  --grid-line: rgba(38, 43, 49, 0.3);
 }
 
 html[data-theme='midnight'] {
@@ -92,41 +94,47 @@ html[data-theme='midnight'] {
   --grid-line: rgba(42, 59, 90, 0.3);
 }
 
-html[data-theme='light'] {
+html[data-theme='graphite-light'] {
   --background: #ffffff;
-  --foreground: #0b1221;
+  --foreground: #17191c;
   --card: #ffffff;
-  --card-foreground: #0b1221;
+  --card-foreground: #17191c;
   --popover: #ffffff;
-  --popover-foreground: #0b1221;
-  --primary: #2563eb;
+  --popover-foreground: #17191c;
+  --primary: #0e7490;
   --primary-foreground: #ffffff;
-  --primary-dim: #1d4ed8;
-  --secondary: #f1f5f9;
-  --secondary-foreground: #0b1221;
-  --muted: #f1f5f9;
-  --muted-foreground: #64748b;
-  --accent: #3b82f6;
+  --primary-dim: #155e75;
+  --secondary: #f1f3f5;
+  --secondary-foreground: #17191c;
+  --muted: #f1f3f5;
+  --muted-foreground: #5b6470;
+  --accent: #0e7490;
   --accent-foreground: #ffffff;
-  --destructive: #ef4444;
+  --destructive: #dc2626;
   --destructive-foreground: #ffffff;
-  --warning: #f59e0b;
+  --warning: #b45309;
   --warning-foreground: #ffffff;
-  --border: #e2e8f0;
-  --input: #e2e8f0;
-  --ring: #2563eb;
+  --border: #e2e5e9;
+  --input: #e2e5e9;
+  --ring: #0e7490;
   --surface-base: #ffffff;
-  --surface-secondary: #f8fafc;
-  --surface-elevated: #f1f5f9;
-  --sidebar: #f8fafc;
-  --sidebar-foreground: #0b1221;
-  --sidebar-primary: #2563eb;
+  --surface-secondary: #f7f8fa;
+  --surface-elevated: #f1f3f5;
+  --sidebar: #f7f8fa;
+  --sidebar-foreground: #17191c;
+  --sidebar-primary: #0e7490;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e2e8f0;
-  --sidebar-accent-foreground: #0b1221;
-  --sidebar-border: #e2e8f0;
-  --sidebar-ring: #2563eb;
-  --grid-line: rgba(226, 232, 240, 1);
+  --sidebar-accent: #e2e5e9;
+  --sidebar-accent-foreground: #17191c;
+  --sidebar-border: #e2e5e9;
+  --sidebar-ring: #0e7490;
+  --grid-line: rgba(226, 229, 233, 1);
+  /* Chart overrides — Graphite Light does not inherit the dark :root set. */
+  --chart-1: #0e7490;
+  --chart-2: #22d3ee;
+  --chart-3: #155e75;
+  --chart-4: #5b6470;
+  --chart-5: #94a3b8;
 }
 
 /* ── Golem the mascot ──────────────────────────────────────────────
@@ -148,16 +156,16 @@ html[data-theme='light'] {
   --golem-shadow: color-mix(in srgb, #000 26%, transparent);
 }
 
-/* Light theme is the one case the generic derivation gets wrong. Mixing
+/* Graphite Light is the one case the generic derivation gets wrong. Mixing
    toward --surface-elevated works in the dark themes because that token is a
    mid-tone; in light it is nearly white, so Golem came out pale-on-white and
-   lost his silhouette. Mix toward --primary over a soft blue instead: same
-   token-driven approach, but it lands on a light blue that still reads as a
+   lost his silhouette. Mix toward --primary over a soft cyan instead: same
+   token-driven approach, but it lands on a light cyan that still reads as a
    solid object against the page. */
-html[data-theme='light'] {
-  --golem-clay: color-mix(in srgb, var(--primary) 30%, #e8f0fd);
+html[data-theme='graphite-light'] {
+  --golem-clay: color-mix(in srgb, var(--primary) 30%, #e8f4f7);
   --golem-body: color-mix(in srgb, var(--primary) 22%, var(--golem-clay));
-  --golem-body-shade: color-mix(in srgb, var(--golem-body) 74%, #24405f);
+  --golem-body-shade: color-mix(in srgb, var(--golem-body) 74%, #0a3b47);
   --golem-body-light: color-mix(in srgb, var(--golem-body) 82%, #fff);
 }
 
@@ -333,8 +341,8 @@ html[data-theme='light'] {
     0deg,
     transparent,
     transparent 2px,
-    rgba(168, 92, 63, 0.015) 2px,
-    rgba(168, 92, 63, 0.015) 4px
+    color-mix(in srgb, var(--accent) 2%, transparent) 2px,
+    color-mix(in srgb, var(--accent) 2%, transparent) 4px
   );
   pointer-events: none;
 }
@@ -491,7 +499,7 @@ html[data-theme='light'] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='110' height='110'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.06 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-html[data-theme='light'] .ambient-grain {
+html[data-theme='graphite-light'] .ambient-grain {
   filter: invert(1);
   opacity: 0.03;
 }
@@ -507,19 +515,20 @@ html[data-theme='light'] .ambient-grain {
    Apply to .card, .bg-card, or .bg-surface-elevated elements. */
 .card-texture {
   background:
-    linear-gradient(175deg, rgba(184, 147, 90, 0.04) 0%, transparent 40%),
-    linear-gradient(355deg, rgba(168, 92, 63, 0.02) 0%, transparent 50%);
+    linear-gradient(175deg, color-mix(in srgb, var(--primary) 5%, transparent) 0%, transparent 40%),
+    linear-gradient(355deg, color-mix(in srgb, var(--accent) 3%, transparent) 0%, transparent 50%);
 }
 
-/* Warm ruled-paper lines for notebook/grimoire contexts */
+/* Ruled-paper lines for notebook/grimoire contexts — token-derived so they
+   re-tint per theme instead of leaking warm residue into Graphite. */
 .ruled-lines {
   background-image:
     repeating-linear-gradient(
       0deg,
       transparent,
       transparent 31px,
-      rgba(184, 147, 90, 0.06) 31px,
-      rgba(184, 147, 90, 0.06) 32px
+      color-mix(in srgb, var(--primary) 8%, transparent) 31px,
+      color-mix(in srgb, var(--primary) 8%, transparent) 32px
     );
 }
 /* ── Button tap feedback ────────────────────────────────────────────
