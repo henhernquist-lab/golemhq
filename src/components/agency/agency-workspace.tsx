@@ -22,7 +22,7 @@
 // /forge workspace. `embedded` drops the standalone page chrome (background
 // grid, back link) when a parent shell already provides navigation.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Network, Play, Pause, MessageSquare, Pencil, Plus, RefreshCw,
   CheckCircle2, XCircle, HelpCircle, Ban, Loader2, Activity, Terminal, Trash2,
@@ -37,8 +37,9 @@ import {
   WorkspaceShell,
 } from '@/components/workspace/workspace-shell'
 import { StatusBadge, type BadgeTone } from '@/components/workspace/status-badge'
-import { AGENT_LAYER_LABELS, AGENT_LAYERS, type Agent, type AgentLayer } from '@/lib/missions/types'
+import { AGENT_LAYER_LABELS, AGENT_LAYERS, type Agent, type AgentLayer, type MissionEvent } from '@/lib/missions/types'
 import { modelChoicesForCli } from '@/lib/missions/cli-models'
+import { deriveAgentActivity, type AgentActivity, type AgentLiveState } from '@/lib/missions/agent-live-state'
 
 const POLL_MS = 6000
 
@@ -66,6 +67,15 @@ interface ActivityEvent {
   ts: string
   type: string
   payload: Record<string, unknown>
+}
+
+const EMPTY_ACTIVITY: AgentActivity = { state: 'idle', lastEventAt: null, detail: null, events: [] }
+
+const LIVE_TONE: Record<AgentLiveState, BadgeTone> = {
+  running: 'primary',
+  validating: 'warning',
+  failed: 'danger',
+  idle: 'neutral',
 }
 
 const LAYER_DESC: Record<AgentLayer, string> = {
@@ -114,7 +124,7 @@ function AuditBadge({ agent, busy, onRun }: { agent: AgencyAgent; busy: boolean;
 }
 
 function AgentCard({
-  agent, relation, auditing, onToggleEnabled, onEdit, onChat, onAudit, onChangeModel, onFire,
+  agent, relation, auditing, onToggleEnabled, onEdit, onChat, onAudit, onChangeModel, onFire, live, onInspect,
 }: {
   agent: AgencyAgent
   relation: ParentRelation<AgencyAgent>
@@ -125,6 +135,8 @@ function AgentCard({
   onAudit: () => void
   onChangeModel: (model: string | null) => void
   onFire: () => void
+  live: AgentActivity
+  onInspect: () => void
 }) {
   // null ⇒ this agent runs no CLI, so it gets no model control at all.
   const modelChoices = modelChoicesForCli(agent.cliCommand)
@@ -154,13 +166,37 @@ function AgentCard({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
+        {/* `enabled` is configuration; live state is what it is DOING, derived
+            from real mission_events. Both matter and they are not the same:
+            an enabled agent that has never run is stale, not active. */}
         <StatusBadge
           tone={agent.enabled ? 'primaryOutline' : 'neutral'}
           size="sm"
-          label={agent.enabled ? 'active' : 'paused'}
+          label={agent.enabled ? 'enabled' : 'paused'}
+        />
+        <StatusBadge
+          tone={LIVE_TONE[live.state]}
+          size="sm"
+          label={live.events.length === 0 ? 'never run' : live.state}
+          title={
+            live.lastEventAt
+              ? `${live.detail ?? live.state} · last event ${when(live.lastEventAt)} · ${live.events.length} events`
+              : 'no recorded activity in the recent event stream'
+          }
         />
         <AuditBadge agent={agent} busy={auditing} onRun={onAudit} />
       </div>
+
+      {live.events.length > 0 && (
+        <button
+          onClick={onInspect}
+          title="Show this agent's real recent events"
+          className="mt-2 flex w-full items-center justify-between gap-2 rounded-lg bg-surface-elevated/60 px-2 py-1.5 text-left font-mono text-[10px] leading-4 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <span className="truncate">{live.detail ?? live.state}</span>
+          <span className="flex-shrink-0 text-muted-foreground/60">{when(live.lastEventAt)}</span>
+        </button>
+      )}
 
       {agent.detection && (
         <p className="mt-2 font-mono text-[10px] leading-4 text-muted-foreground">
@@ -265,6 +301,7 @@ function ActivityRow({ event, agentName }: { event: ActivityEvent; agentName: (i
 export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
   const [agents, setAgents] = useState<AgencyAgent[]>([])
   const [activity, setActivity] = useState<ActivityEvent[]>([])
+  const [inspecting, setInspecting] = useState<AgencyAgent | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [hiring, setHiring] = useState(false)
@@ -342,6 +379,14 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  // One pass over the event stream per poll, shared by every card. Deriving
+  // inside each card would re-scan the whole stream 17 times per render.
+  const liveByAgent = useMemo(() => {
+    const map = new Map<string, AgentActivity>()
+    for (const a of agents) map.set(a.id, deriveAgentActivity(a.name, activity as MissionEvent[]))
+    return map
+  }, [agents, activity])
+
   const fireAgent = useCallback(async (agent: AgencyAgent) => {
     if (!window.confirm(`Remove ${agent.name} from the roster? Historical missions keep their event trail.`)) return
     const res = await fetch(`/api/missions/agents/${agent.id}`, { method: 'DELETE' })
@@ -382,6 +427,39 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
         <div className="mb-8 rounded-xl bg-warning/10 px-4 py-3 font-mono text-xs leading-5 text-warning shadow-sm ring-1 ring-warning/20">{error}</div>
       )}
 
+      {/* Per-agent event stream — the real answer to "is this agent stale?".
+          Every line is a mission_events row involving this agent; an agent with
+          nothing here has genuinely never run. */}
+      {inspecting && (
+        <div className={`mb-8 p-4 ${WORKSPACE_CARD_CLASS}`}>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <p className="font-mono text-xs leading-5 text-foreground">
+              {inspecting.name}
+              <span className="ml-2 text-muted-foreground">
+                · {(liveByAgent.get(inspecting.id) ?? EMPTY_ACTIVITY).events.length} recent events
+              </span>
+            </p>
+            <button
+              onClick={() => setInspecting(null)}
+              className="font-mono text-[10px] leading-4 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              close
+            </button>
+          </div>
+          <div className="flex max-h-64 flex-col gap-1.5 overflow-y-auto">
+            {(liveByAgent.get(inspecting.id) ?? EMPTY_ACTIVITY).events.map((e) => (
+              <div key={e.id} className="flex items-baseline gap-2 font-mono text-[10px] leading-4">
+                <span className="flex-shrink-0 text-muted-foreground/50">{when(e.ts)}</span>
+                <span className="flex-shrink-0 text-primary/80">{e.type}</span>
+                <span className="truncate text-muted-foreground">
+                  {JSON.stringify(e.payload).slice(0, 120)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {chatAgent && <AgentChatPanel key={chatAgent.id} agent={chatAgent} onClose={() => setChatAgent(null)} />}
       {(hiring || editing) && (
         <HireWorkerPanel
@@ -418,6 +496,8 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
                 }}
                 onChangeModel={(m) => changeModel(a, m)}
                 onFire={() => fireAgent(a)}
+                live={liveByAgent.get(a.id) ?? EMPTY_ACTIVITY}
+                onInspect={() => setInspecting(inspecting?.id === a.id ? null : a)}
               />
             )}
           />
