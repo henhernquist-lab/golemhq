@@ -1007,3 +1007,29 @@ export async function setTaskExpectedPaths(taskId: string, paths: string[] | nul
   }
   return true
 }
+
+/**
+ * Remove a worker from the roster.
+ *
+ * Layer 1 is refused: Planner, Scheduler and Coordinator are not staff, they
+ * are the pipeline. Deleting one would leave missions that can never be
+ * planned or dispatched, with no UI path back. Layer 2 builders and Layer 3
+ * validators are genuinely optional and can go.
+ *
+ * Tasks reference agents via assigned_agent; the column is nullable and set
+ * null on delete, so historical missions keep their event trail (which records
+ * the agent NAME in the payload) even after the row is gone.
+ */
+export async function deleteAgent(id: string): Promise<Agent> {
+  const existing = await getAgentById(id)
+  if (!existing) throw new MissionStoreError(`deleteAgent: agent ${id} not found`)
+  if (existing.layer === 1) {
+    throw new MissionStoreError(
+      `deleteAgent: ${existing.name} is a Layer 1 orchestrator — the pipeline needs it. Disable it instead.`,
+    )
+  }
+
+  const { error } = await supabase.from('agents').delete().eq('id', id)
+  if (error) throw new MissionStoreError(`deleteAgent: ${error.message}`)
+  return existing
+}

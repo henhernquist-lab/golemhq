@@ -12,7 +12,7 @@
  */
 
 import { requireHenryOwner } from '@/lib/auth-owner'
-import { getAgentById, recordDetection, updateAgent, type UpdateAgentInput } from '@/lib/missions/store'
+import { deleteAgent, getAgentById, recordDetection, updateAgent, type UpdateAgentInput } from '@/lib/missions/store'
 import { detectClis } from '@/lib/missions/cli-detect'
 
 export const runtime = 'nodejs'
@@ -95,5 +95,25 @@ export async function PATCH(req: Request, ctx: RouteCtx) {
     return Response.json({ agent, detection })
   } catch (err) {
     return Response.json({ error: err instanceof Error ? err.message : 'failed to update agent' }, { status: 400 })
+  }
+}
+
+/**
+ * DELETE — fire a worker. Owner-gated like every other agent mutation.
+ * The Layer 1 refusal lives in the store so any caller gets it, not just this
+ * route; a 409 here means "structurally required", not "not found".
+ */
+export async function DELETE(_req: Request, ctx: RouteCtx) {
+  const { response } = await requireHenryOwner()
+  if (response) return response
+
+  const { id } = await ctx.params
+  try {
+    const removed = await deleteAgent(id)
+    return Response.json({ removed: { id: removed.id, name: removed.name } })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'failed to remove agent'
+    const status = /Layer 1 orchestrator/.test(message) ? 409 : /not found/.test(message) ? 404 : 500
+    return Response.json({ error: message }, { status })
   }
 }

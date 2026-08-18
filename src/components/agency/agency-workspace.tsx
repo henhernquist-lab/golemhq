@@ -25,7 +25,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Network, Play, Pause, MessageSquare, Pencil, Plus, RefreshCw,
-  CheckCircle2, XCircle, HelpCircle, Ban, Loader2, Activity, Terminal,
+  CheckCircle2, XCircle, HelpCircle, Ban, Loader2, Activity, Terminal, Trash2,
 } from 'lucide-react'
 
 import { HireWorkerPanel, type EditableAgent } from '@/components/missions/hire-worker'
@@ -38,13 +38,9 @@ import {
 } from '@/components/workspace/workspace-shell'
 import { StatusBadge, type BadgeTone } from '@/components/workspace/status-badge'
 import { AGENT_LAYER_LABELS, AGENT_LAYERS, type Agent, type AgentLayer } from '@/lib/missions/types'
-import { listModels } from '@/lib/nim'
+import { modelChoicesForCli } from '@/lib/missions/cli-models'
 
 const POLL_MS = 6000
-
-// Client-safe registry read — listModels() is pure (scope filter only, no env
-// reads), so this mirrors the chat picker's lineup without touching keys.
-const MODEL_OPTIONS = listModels('chat')
 
 type AuditStatus = 'working' | 'broken' | 'absent' | 'not_applicable'
 
@@ -118,7 +114,7 @@ function AuditBadge({ agent, busy, onRun }: { agent: AgencyAgent; busy: boolean;
 }
 
 function AgentCard({
-  agent, relation, auditing, onToggleEnabled, onEdit, onChat, onAudit, onChangeModel,
+  agent, relation, auditing, onToggleEnabled, onEdit, onChat, onAudit, onChangeModel, onFire,
 }: {
   agent: AgencyAgent
   relation: ParentRelation<AgencyAgent>
@@ -128,7 +124,11 @@ function AgentCard({
   onChat: () => void
   onAudit: () => void
   onChangeModel: (model: string | null) => void
+  onFire: () => void
 }) {
+  // null ⇒ this agent runs no CLI, so it gets no model control at all.
+  const modelChoices = modelChoicesForCli(agent.cliCommand)
+
   return (
     <div className={`w-72 p-4 ${WORKSPACE_CARD_CLASS}`}>
       <div className="flex items-start justify-between gap-3">
@@ -184,34 +184,50 @@ function AgentCard({
         </p>
       )}
 
-      <div className="mt-4">
-        <label className="flex flex-col gap-1.5">
-          <span className="font-mono text-[10px] uppercase tracking-wider leading-4 text-muted-foreground">model</span>
-          {agent.layer === 2 && agent.cliCommand ? (
+      {/* Layer 1 orchestrators and Layer 3 validators are logic modules: no
+          CLI, no model, so no control at all rather than a disabled one. */}
+      {modelChoices && (
+        <div className="mt-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="font-mono text-[10px] uppercase tracking-wider leading-4 text-muted-foreground">
+              model
+            </span>
             <select
               value={agent.model ?? ''}
               onChange={(e) => onChangeModel(e.target.value || null)}
+              title={
+                modelChoices.unfiltered
+                  ? `${agent.cliCommand} is a multi-provider CLI — its supported model list is configured host-side and cannot be read from here, so the full registry is offered.`
+                  : `Models ${agent.cliCommand?.split(' ')[0]} can actually run`
+              }
               className="w-full rounded-lg border border-border/50 bg-surface-base px-2 py-1.5 font-mono text-[10px] leading-4 text-foreground shadow-sm outline-none focus:border-primary/40"
             >
-              <option value="">CLI default</option>
-              {MODEL_OPTIONS.map((m) => (
+              <option value="">use the CLI&apos;s own default</option>
+              {modelChoices.models.map((m) => (
                 <option key={m.id} value={m.id}>{m.label}</option>
               ))}
             </select>
-          ) : (
-            <select
-              disabled
-              value=""
-              title="Logic modules don't run a CLI, so there is no model to assign"
-              className="w-full cursor-not-allowed rounded-lg border border-border/40 bg-surface-base px-2 py-1.5 font-mono text-[10px] leading-4 text-muted-foreground/50 shadow-sm outline-none"
-            >
-              <option value="">logic · no CLI</option>
-            </select>
-          )}
-        </label>
-      </div>
+            {modelChoices.unfiltered && (
+              <span className="font-mono text-[9px] leading-4 text-muted-foreground/70">
+                supported list not programmatically knowable for this CLI — full registry shown
+              </span>
+            )}
+          </label>
+        </div>
+      )}
 
       <div className="mt-4 flex items-center gap-4 border-t border-border/40 pt-3">
+        {/* Layer 1 is the pipeline itself — the store refuses to delete it, so
+            the control is not offered rather than offered and rejected. */}
+        {agent.layer !== 1 && (
+          <button
+            onClick={onFire}
+            title={`Remove ${agent.name} from the roster`}
+            className="ml-auto inline-flex items-center gap-1 font-mono text-[11px] leading-5 text-muted-foreground transition-colors hover:text-destructive"
+          >
+            <Trash2 className="h-3 w-3" /> fire
+          </button>
+        )}
         {agent.cliCommand && (
           <button onClick={onChat} className="inline-flex items-center gap-1 font-mono text-[11px] leading-5 text-muted-foreground transition-colors hover:text-primary">
             <MessageSquare className="h-3 w-3" /> chat
@@ -326,6 +342,17 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
+  const fireAgent = useCallback(async (agent: AgencyAgent) => {
+    if (!window.confirm(`Remove ${agent.name} from the roster? Historical missions keep their event trail.`)) return
+    const res = await fetch(`/api/missions/agents/${agent.id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      setError(body.error ?? `Could not remove ${agent.name}.`)
+      return
+    }
+    load()
+  }, [load])
+
   const agentName = (id: string | null) => (id ? agents.find((a) => a.id === id)?.name ?? null : null)
 
   return (
@@ -390,6 +417,7 @@ export function AgencyWorkspace({ embedded = false }: { embedded?: boolean }) {
                   setChatAgent({ id: a.id, name: a.name, cliCommand: a.cliCommand })
                 }}
                 onChangeModel={(m) => changeModel(a, m)}
+                onFire={() => fireAgent(a)}
               />
             )}
           />
