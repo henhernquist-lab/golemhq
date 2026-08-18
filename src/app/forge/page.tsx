@@ -8,8 +8,9 @@ import Link from 'next/link'
 import {
   ArrowLeft, ChevronDown, ChevronRight, Check, X, Send, Loader2,
   GitBranch, Folder, File, Lock, Sliders, Zap, TerminalSquare, Eye, Play,
-  Swords, FileText, Pencil, Brain, Globe, Plus, MessageSquare, ListTree, Network,
+  Swords, FileText, Pencil, Brain, Globe, Plus, MessageSquare, ListTree, Network, Rocket,
 } from 'lucide-react'
+import { HeadAgent } from '@/components/missions/head-agent'
 import { MissionsWorkspace } from '@/components/missions/missions-workspace'
 import { AgencyWorkspace } from '@/components/agency/agency-workspace'
 import { DriveTerminalWorkspace, type DriveTerminalWorkspaceHandle } from '@/components/terminal/drive-terminal-workspace'
@@ -27,10 +28,11 @@ import type { RoutingDecision } from '@/lib/router/types'
 
 // ─── Tabs ───────────────────────────────────────────────────
 
-type PrimaryTab = 'forge' | 'missions' | 'agency'
+type PrimaryTab = 'command' | 'forge' | 'missions' | 'agency'
 type WorkspaceMode = 'chat' | 'command'
 
 const PRIMARY_TABS: readonly TabStripItem<PrimaryTab>[] = [
+  { id: 'command', label: 'Command', icon: Rocket, title: 'Describe what you want built — it becomes a real mission and runs the pipeline' },
   { id: 'forge', label: 'Forge', icon: Swords },
   { id: 'missions', label: 'Missions', icon: ListTree, title: 'The real mission spine — missions, task graph, agent roster' },
   { id: 'agency', label: 'Agency', icon: Network, title: 'Org chart, pause/resume, real functional audits' },
@@ -1825,6 +1827,12 @@ USER REQUEST: ${userText}`
           </div>
         </div>
       </div>
+      </div>
+
+      {/* Command tab: the mission ignition (Batch 9). Stays mounted like every
+          other panel so an in-flight mission's live feed survives a tab switch. */}
+      <div className={`min-h-0 flex-1 overflow-y-auto ${primaryTab === 'command' ? '' : 'hidden'}`}>
+        <HeadAgent embedded />
       </div>
 
       {/* Missions tab: the real mission spine, embedded (Batch 8.5). */}

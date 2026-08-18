@@ -65,7 +65,11 @@ export async function GET(_req: Request, ctx: RouteCtx) {
         return acc
       }, {})
 
-    return Response.json({ mission, tasks, validations, leases: leasesByTask, conflicts })
+    // The raw event stream, already loaded above for the derivations. Batch 9's
+    // Command surface renders it as live progress, and it is the only honest
+    // source for that — the pipeline records nothing else as it runs. Returning
+    // it costs no extra query.
+    return Response.json({ mission, tasks, events, validations, leases: leasesByTask, conflicts })
   } catch (err) {
     return Response.json(
       { error: err instanceof Error ? err.message : 'failed to load mission' },
