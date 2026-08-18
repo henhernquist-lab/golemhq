@@ -16,7 +16,7 @@
 
 import { requireHenryOwner } from '@/lib/auth-owner'
 import { readRequestJson } from '@/lib/request-json'
-import { getMission, listTasks, recordEvent, updateMissionStatus } from '@/lib/missions/store'
+import { getMission, listEvents, listTasks, recordEvent, updateMissionStatus } from '@/lib/missions/store'
 import { scheduleTasks } from '@/lib/missions/scheduler'
 
 export const runtime = 'nodejs'
@@ -64,19 +64,37 @@ export async function POST(req: Request, ctx: RouteCtx) {
     cwd,
     maxTasks: Math.min(Math.max(1, maxTasks ?? 2), 10),
     maxConcurrent: Math.min(Math.max(1, maxConcurrent ?? 1), 4),
+    // The wave this route fires is serial by default, and until Batch 10 that
+    // meant the shared checkout: worktrees were allocated on maxConcurrent > 1
+    // alone, so preserveWorktree never ran, no `golem/task/<id>` branch was
+    // ever written, and the approval gate had nothing to list. The builder's
+    // output stayed as uncommitted changes in this checkout — real work, in
+    // the one place a later `git checkout` throws away.
+    isolate: true,
   }).then(async () => {
-    // Nothing in Batches 1-7 ever moves a mission to `completed`: the Planner
-    // sets `running`, failures set `failed`, and a mission whose tasks all
-    // finished just stayed `running` forever. That is invisible until there is
-    // a front door — createMission refuses a second mission while an active
-    // one holds the repo, so without this the entry point jams permanently
-    // after the first success. Closing it here rather than inside the
-    // Scheduler keeps the proven pipeline untouched.
+    // Nothing in Batches 1-7 ever moves a mission off `running`: the Planner
+    // sets it, failures set `failed`, and a mission whose tasks all finished
+    // just stayed there forever. That is invisible until there is a front door
+    // — createMission refuses a second mission while an active one holds the
+    // repo, so without this the entry point jams permanently after the first
+    // success. Closed here rather than inside the proven Scheduler.
+    //
+    // `awaiting_approval`, not `completed`: with isolation the work is sitting
+    // on task branches that have not been merged into anything. Calling that
+    // completed is the same lie the missing branch used to tell — it reads as
+    // landed while main has none of it. `completed` is the approval gate's to
+    // set, once the merge actually moves the target.
     try {
-      const tasks = await listTasks(id)
-      if (tasks.length > 0 && tasks.every((t) => t.status === 'complete')) {
-        await updateMissionStatus(id, 'completed', { completedTasks: tasks.length })
-      }
+      const [tasks, events] = await Promise.all([listTasks(id), listEvents(id, 500)])
+      if (tasks.length === 0 || !tasks.every((t) => t.status === 'complete')) return
+      // A task that wrote nothing leaves a clean worktree and no branch, so
+      // there is nothing to approve and holding the repo open for a decision
+      // that has no subject would jam the door again.
+      const preserved = events.some((e) => e.type === 'scheduler.work_preserved')
+      await updateMissionStatus(id, preserved ? 'awaiting_approval' : 'completed', {
+        completedTasks: tasks.length,
+        ...(preserved ? {} : { reason: 'every task finished without writing anything to preserve' }),
+      })
     } catch {
       /* best effort — the events remain the record either way */
     }

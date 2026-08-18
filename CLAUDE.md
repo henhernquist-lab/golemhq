@@ -89,6 +89,8 @@ MCP is Claude Code only across the roster. Gemini CLI, OpenCode, and Hermes muta
 
 The Planner enforces a spend cap via PLANNER_MISSION_TOKEN_CAP, PLANNER_DAILY_TOKEN_CAP, PLANNER_MISSION_COST_CAP_USD, and PLANNER_DAILY_COST_CAP_USD. Malformed values throw rather than silently defaulting to unlimited. The ledger is mission_events with planner.usage events, not usage_log — usage_log has a CHECK constraint and swallows errors, which makes it unsuitable for a hard cap.
 
+A finished wave does not mean landed work. Every dispatched task runs in its own worktree and commits to golem/task/<id> — the mission then sits at awaiting_approval, holding the repo, until the approval gate merges or rejects it. Only the merge sets completed. Note that .env.example is itself covered by the .gitignore .env* rule and is therefore untracked, so it is not where an environment contract survives: GOLEM_REPO_ROOT is what the approval gate merges into, and without it that route returns 503 rather than guessing at a checkout. Dispatch falls back to process.cwd(); the gate deliberately does not.
+
 Backend selection
 
 backend() branches on whether process.env.VERCEL is set. When set, work routes to the Sprite. When unset, it runs in-process on the Codespace.

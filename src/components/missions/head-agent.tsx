@@ -17,9 +17,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2, Rocket, Send, AlertCircle, Play, XCircle } from 'lucide-react'
 
+import { ApprovalGate } from '@/components/missions/approval-gate'
 import { WorkspaceShell, WORKSPACE_CARD_CLASS, WORKSPACE_INSET_CLASS } from '@/components/workspace/workspace-shell'
 import { StatusBadge, type BadgeTone } from '@/components/workspace/status-badge'
-import type { Mission, Task, MissionEvent, TaskStatus } from '@/lib/missions/types'
+import type { Mission, Task, MissionEvent, TaskStatus, MissionStatus } from '@/lib/missions/types'
+import { TERMINAL_MISSION_STATUSES } from '@/lib/missions/types'
+
+/** The repo /api/missions/start defaults to — the one this surface commands. */
+const DEFAULT_REPO = 'golemhq/enry.agent'
 
 const POLL_MS = 2500
 
@@ -31,6 +36,15 @@ const TASK_TONE: Record<TaskStatus, BadgeTone> = {
   complete: 'primaryStrong',
   failed: 'danger',
   blocked: 'surface',
+}
+
+const MISSION_TONE: Record<MissionStatus, BadgeTone> = {
+  planning: 'neutral',
+  awaiting_approval: 'warning',
+  running: 'primary',
+  completed: 'primaryStrong',
+  failed: 'danger',
+  cancelled: 'neutral',
 }
 
 /** Events worth a line in the feed, in the words Henry would use. */
@@ -58,6 +72,20 @@ function describe(event: MissionEvent): string | null {
     case 'scheduler.task_failed': return `${agent ?? 'builder'} failed: ${String(p.error ?? '').slice(0, 90)}`
     case 'task.validated': return `validators ${p.passed ? 'passed' : 'failed'}`
     case 'scheduler.run': return `run: ${p.dispatched ?? 0} dispatched, ${p.failed ?? 0} failed`
+    // The landing (Batch 10). Without these the feed went quiet exactly where
+    // the mission stops being the pipeline's business and becomes Henry's.
+    case 'scheduler.work_preserved': {
+      const files = Array.isArray(p.files) ? p.files.length : 0
+      return `work saved to ${String(p.branch ?? 'branch').replace('golem/task/', 'branch ')} (${files} file${files === 1 ? '' : 's'})`
+    }
+    case 'scheduler.work_lost': return `WORK LOST: ${String(p.error ?? '').slice(0, 90)}`
+    case 'scheduler.worktree_failed': return `no isolated checkout: ${String(p.error ?? '').slice(0, 90)}`
+    case 'approval.approved': return 'approved — merging'
+    case 'approval.merged': return `merged ${String(p.branch ?? '').replace('golem/task/', '')} → ${p.targetBranch ?? 'main'}`
+    case 'approval.wave_landed': return `landed on ${p.targetBranch ?? 'main'} · ${String(p.to ?? '').slice(0, 7)}`
+    case 'approval.conflicted': return `conflict: ${String(p.detail ?? '').slice(0, 90)}`
+    case 'approval.merge_aborted': return `nothing merged — ${p.targetBranch ?? 'main'} left untouched`
+    case 'approval.rejected': return `rejected${p.kept ? ' (branch kept)' : ''}`
     default: return null
   }
 }
@@ -76,28 +104,70 @@ export function HeadAgent({ embedded = false }: { embedded?: boolean }) {
   const [events, setEvents] = useState<MissionEvent[]>([])
   const feedRef = useRef<HTMLDivElement>(null)
 
+  const missionId = mission?.id ?? null
+  // Which mission the screen is actually showing. A poll that was in flight
+  // when a new mission started would otherwise land after the reset and
+  // repaint the previous mission's tasks over it.
+  const activeIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    activeIdRef.current = missionId
+  }, [missionId])
+
+  // Adopt the repo's active mission on mount.
+  //
+  // The mission lived only in this component's state, so a reload lost it —
+  // survivable while dispatch was the last step, and not survivable now that a
+  // mission ends at `awaiting_approval` and goes on holding the repo until
+  // someone decides. Without this the gate is unreachable after a refresh and
+  // the only symptom is the next start being refused by a mission the screen
+  // cannot show. One active mission per repo is createMission's rule, so there
+  // is at most one to adopt.
+  useEffect(() => {
+    let cancelled = false
+    const adopt = async () => {
+      try {
+        const res = await fetch(`/api/missions?repo=${encodeURIComponent(DEFAULT_REPO)}`, { cache: 'no-store' })
+        if (!res.ok) return
+        const data = await res.json()
+        const active = (data.missions ?? []).find(
+          (m: Mission) => !TERMINAL_MISSION_STATUSES.includes(m.status),
+        )
+        if (active && !cancelled) setMission(active)
+      } catch {
+        /* the front door still works without an adopted mission */
+      }
+    }
+    adopt()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // Live feedback comes from the real mission_events stream via the existing
   // detail route — the same rows the dashboard reads. Nothing is synthesised
   // client-side, so what shows here is exactly what the pipeline recorded.
-  useEffect(() => {
-    if (!mission) return
-    let cancelled = false
-    const tick = async () => {
-      try {
-        const res = await fetch(`/api/missions/${mission.id}`, { cache: 'no-store' })
-        if (!res.ok || cancelled) return
-        const data = await res.json()
-        setTasks(data.tasks ?? [])
-        setEvents(data.events ?? [])
-        if (data.mission) setMission((m) => (m && data.mission.status !== m.status ? data.mission : m))
-      } catch {
-        /* a dropped poll must not clear the screen Henry is reading */
-      }
+  // Also the approval gate's refresh hook: landing a merge changes the mission
+  // status, and this is what reads it back.
+  const refresh = useCallback(async () => {
+    if (!missionId) return
+    try {
+      const res = await fetch(`/api/missions/${missionId}`, { cache: 'no-store' })
+      if (!res.ok || activeIdRef.current !== missionId) return
+      const data = await res.json()
+      setTasks(data.tasks ?? [])
+      setEvents(data.events ?? [])
+      if (data.mission) setMission((m) => (m && data.mission.status !== m.status ? data.mission : m))
+    } catch {
+      /* a dropped poll must not clear the screen Henry is reading */
     }
-    tick()
-    const timer = setInterval(tick, POLL_MS)
-    return () => { cancelled = true; clearInterval(timer) }
-  }, [mission])
+  }, [missionId])
+
+  useEffect(() => {
+    if (!missionId) return
+    void refresh()
+    const timer = setInterval(() => void refresh(), POLL_MS)
+    return () => clearInterval(timer)
+  }, [missionId, refresh])
 
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' })
@@ -207,51 +277,65 @@ export function HeadAgent({ embedded = false }: { embedded?: boolean }) {
 
       <AnimatePresence>
         {mission && (
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="grid gap-4 lg:grid-cols-2">
-            <div className={`${WORKSPACE_CARD_CLASS} p-4`}>
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">task graph</p>
-                <button
-                  onClick={dispatch}
-                  disabled={dispatching || tasks.length === 0}
-                  title="Hand the graph to the Scheduler — real builder CLIs, real checkout"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 px-2.5 py-1.5 font-mono text-[11px] leading-4 text-primary shadow-sm ring-1 ring-primary/20 transition-colors hover:bg-primary/20 disabled:opacity-40"
-                >
-                  {dispatching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} dispatch
-                </button>
-              </div>
-              <p className="mb-3 font-mono text-[11px] leading-5 text-foreground/80">{mission.goal}</p>
-              <div className="flex flex-col gap-2">
-                {tasks.map((t, i) => (
-                  <div key={t.id} className={`${WORKSPACE_INSET_CLASS} flex items-start justify-between gap-3 px-3 py-2`}>
-                    <p className="font-mono text-[11px] leading-5 text-foreground/90">
-                      <span className="text-muted-foreground">{i + 1}. </span>{t.title}
-                    </p>
-                    <StatusBadge label={t.status} tone={TASK_TONE[t.status]} size="sm" />
-                  </div>
-                ))}
-              </div>
-            </div>
+          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            {/* The mission's last step is a human one. Before Batch 10 this
+                surface ended at dispatch and the work sat on unmerged branches
+                a tab away, so "done" here never meant anything had landed. */}
+            <ApprovalGate missionId={mission.id} pollMs={POLL_MS} onSettled={refresh} />
 
-            <div className={`${WORKSPACE_CARD_CLASS} flex max-h-[26rem] flex-col p-4`}>
-              <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                live · mission_events
-              </p>
-              <div ref={feedRef} className="flex flex-col gap-1.5 overflow-y-auto">
-                {feed.length === 0 && (
-                  <p className="font-mono text-[11px] leading-5 text-muted-foreground/60">waiting for events…</p>
-                )}
-                {feed.map(({ e, text }) => (
-                  <motion.div
-                    key={e.id}
-                    initial={{ opacity: 0, x: -6 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="flex items-baseline gap-2 font-mono text-[10px] leading-5"
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className={`${WORKSPACE_CARD_CLASS} p-4`}>
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <p className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">task graph</p>
+                    <StatusBadge label={mission.status} tone={MISSION_TONE[mission.status]} size="sm" />
+                  </div>
+                  <button
+                    onClick={dispatch}
+                    disabled={dispatching || tasks.length === 0 || mission.status !== 'running'}
+                    title={
+                      mission.status === 'running'
+                        ? 'Hand the graph to the Scheduler — real builder CLIs, real checkout'
+                        : `Mission is "${mission.status}" — only a planned mission can be dispatched`
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 px-2.5 py-1.5 font-mono text-[11px] leading-4 text-primary shadow-sm ring-1 ring-primary/20 transition-colors hover:bg-primary/20 disabled:opacity-40"
                   >
-                    <span className="flex-shrink-0 text-muted-foreground/50">{e.ts.slice(11, 19)}</span>
-                    <span className="text-foreground/85">{text}</span>
-                  </motion.div>
-                ))}
+                    {dispatching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} dispatch
+                  </button>
+                </div>
+                <p className="mb-3 font-mono text-[11px] leading-5 text-foreground/80">{mission.goal}</p>
+                <div className="flex flex-col gap-2">
+                  {tasks.map((t, i) => (
+                    <div key={t.id} className={`${WORKSPACE_INSET_CLASS} flex items-start justify-between gap-3 px-3 py-2`}>
+                      <p className="font-mono text-[11px] leading-5 text-foreground/90">
+                        <span className="text-muted-foreground">{i + 1}. </span>{t.title}
+                      </p>
+                      <StatusBadge label={t.status} tone={TASK_TONE[t.status]} size="sm" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className={`${WORKSPACE_CARD_CLASS} flex max-h-[26rem] flex-col p-4`}>
+                <p className="mb-3 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                  live · mission_events
+                </p>
+                <div ref={feedRef} className="flex flex-col gap-1.5 overflow-y-auto">
+                  {feed.length === 0 && (
+                    <p className="font-mono text-[11px] leading-5 text-muted-foreground/60">waiting for events…</p>
+                  )}
+                  {feed.map(({ e, text }) => (
+                    <motion.div
+                      key={e.id}
+                      initial={{ opacity: 0, x: -6 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className="flex items-baseline gap-2 font-mono text-[10px] leading-5"
+                    >
+                      <span className="flex-shrink-0 text-muted-foreground/50">{e.ts.slice(11, 19)}</span>
+                      <span className="text-foreground/85">{text}</span>
+                    </motion.div>
+                  ))}
+                </div>
               </div>
             </div>
           </motion.div>

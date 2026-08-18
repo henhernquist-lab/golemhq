@@ -107,6 +107,18 @@ export interface ScheduleOptions {
    */
   worktreeFor?: (taskId: string) => string | undefined
   /**
+   * Allocate per-task worktrees even at maxConcurrent=1.
+   *
+   * Isolation was introduced (Batch 6.5) to fix attribution, which is only at
+   * risk when builders run concurrently — so a serial wave ran in the shared
+   * checkout. That is correct for attribution and wrong for landing: the
+   * `golem/task/<id>` branch is written by preserveWorktree, which only runs
+   * for a managed worktree, so a serial wave left its output as uncommitted
+   * changes in the caller's checkout and produced nothing for the approval
+   * gate to merge. Set this when the run's output has to survive as a branch.
+   */
+  isolate?: boolean
+  /**
    * Do NOT allocate per-task worktrees, even when running concurrently.
    *
    * Debugging only. Concurrency without isolation corrupts attribution — see
@@ -401,7 +413,8 @@ export async function scheduleTasks(
   // The escape hatch survives for debugging but is no longer reachable by
   // accident: opting out of worktrees ALSO requires acknowledging the shared
   // checkout, because that is what opting out actually means.
-  const manageWorktrees = maxConcurrent > 1 && !options.worktreeFor && !options.noWorktrees
+  const wantsIsolation = maxConcurrent > 1 || !!options.isolate
+  const manageWorktrees = wantsIsolation && !options.worktreeFor && !options.noWorktrees
   if (maxConcurrent > 1 && !manageWorktrees && !options.worktreeFor && !options.allowSharedCheckout) {
     throw new SchedulerError(
       `maxConcurrent=${maxConcurrent} with noWorktrees needs allowSharedCheckout:true — running builders ` +
@@ -411,8 +424,8 @@ export async function scheduleTasks(
   const repoRoot = options.cwd
   if (manageWorktrees && !repoRoot) {
     throw new SchedulerError(
-      `maxConcurrent=${maxConcurrent} needs options.cwd: worktrees are cut from that checkout, and without ` +
-        `it there is no repository to cut them from.`,
+      `${options.isolate ? 'isolate:true' : `maxConcurrent=${maxConcurrent}`} needs options.cwd: worktrees are ` +
+        `cut from that checkout, and without it there is no repository to cut them from.`,
     )
   }
 

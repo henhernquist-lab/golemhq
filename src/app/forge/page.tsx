@@ -351,11 +351,16 @@ export default function AgentPage() {
   const searchParams = useSearchParams()
   const [primaryTab, setPrimaryTab] = useState<PrimaryTab>(
     () => {
+      // 'command' was missing from both allowlists since Batch 9 added the
+      // tab: ?tab=command was silently ignored and the tab never survived a
+      // reload, so a mission in flight was one refresh away from invisible.
       const fromQuery = searchParams.get('tab')
-      if (fromQuery === 'missions' || fromQuery === 'agency' || fromQuery === 'forge') return fromQuery
+      if (fromQuery === 'command' || fromQuery === 'missions' || fromQuery === 'agency' || fromQuery === 'forge') {
+        return fromQuery
+      }
       if (typeof window === 'undefined') return 'forge'
       const saved = localStorage.getItem('golem.workspace.tab')
-      return saved === 'missions' || saved === 'agency' ? saved : 'forge'
+      return saved === 'command' || saved === 'missions' || saved === 'agency' ? saved : 'forge'
     },
   )
   useEffect(() => {

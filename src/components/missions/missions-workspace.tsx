@@ -24,6 +24,7 @@ import { ListTree, MessageSquare, Pencil, Plus, RefreshCw, Server } from 'lucide
 import { TaskEvidencePanel } from '@/components/missions/task-evidence'
 import { HireWorkerPanel, type EditableAgent } from '@/components/missions/hire-worker'
 import { AgentChatPanel } from '@/components/missions/agent-chat-panel'
+import { ApprovalGate } from '@/components/missions/approval-gate'
 import {
   WORKSPACE_CARD_CLASS,
   WORKSPACE_INSET_CLASS,
@@ -44,23 +45,6 @@ interface AgentWithDetection extends Agent {
     detectedHost: string | null
   } | null
   instructions: string | null
-}
-
-interface ApprovalTaskView {
-  task: { id: string; title: string }
-  branch: string
-  branchExists: boolean
-  files: string[]
-  insertions: number
-  deletions: number
-  patch: string
-  patchTruncated: boolean
-  decision: 'pending' | 'approved' | 'rejected' | 'merged' | 'conflicted'
-}
-
-interface ApprovalView {
-  targetBranch: string
-  tasks: ApprovalTaskView[]
 }
 
 interface LeaseView {
@@ -123,10 +107,6 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
   const [agents, setAgents] = useState<AgentWithDetection[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
-  const [approval, setApproval] = useState<ApprovalView | null>(null)
-  const [approvalError, setApprovalError] = useState<string | null>(null)
-  const [approvalBusy, setApprovalBusy] = useState(false)
-  const [openDiffId, setOpenDiffId] = useState<string | null>(null)
   const [leases, setLeases] = useState<Record<string, LeaseView[]>>({})
   const [conflicts, setConflicts] = useState<Record<string, ConflictView>>({})
   const [validations, setValidations] = useState<Record<string, ValidationPayload>>({})
@@ -163,22 +143,6 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
       setValidations(data.validations ?? {})
       setLeases(data.leases ?? {})
       setConflicts(data.conflicts ?? {})
-
-      // Separate route: it shells out to git, so it is owner-gated and slower
-      // than the task list. A failure here must not blank the dashboard.
-      try {
-        const ar = await fetch(`/api/missions/${id}/approval`, { cache: 'no-store' })
-        const ab = await ar.json().catch(() => ({}))
-        if (ar.ok) {
-          setApproval(ab)
-          setApprovalError(null)
-        } else {
-          setApproval(null)
-          setApprovalError(ab.error ?? `approval unavailable (${ar.status})`)
-        }
-      } catch {
-        setApproval(null)
-      }
     } catch {
       /* keep last-known */
     }
@@ -200,28 +164,12 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
   const selected = missions.find((m) => m.id === selectedId) ?? null
   const taskIndex = new Map(tasks.map((t, i) => [t.id, i + 1]))
 
-  const act = async (action: 'approve' | 'reject') => {
-    if (!selectedId || !approval) return
-    setApprovalBusy(true)
-    setApprovalError(null)
-    try {
-      const ids = approval.tasks.filter((t) => t.decision === 'pending' && t.branchExists).map((t) => t.task.id)
-      const res = await fetch(`/api/missions/${selectedId}/approval`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, taskIds: ids }),
-      })
-      const body = await res.json().catch(() => ({}))
-      // 409 is a conflicted wave, which is an answer and not an error — it has
-      // to render as blocking state rather than as a failed request.
-      if (!res.ok) setApprovalError(body.error ?? (body.conflicts?.[0]?.detail as string) ?? `failed (${res.status})`)
-      await loadMission(selectedId)
-    } catch (err) {
-      setApprovalError(err instanceof Error ? err.message : 'approval failed')
-    } finally {
-      setApprovalBusy(false)
-    }
-  }
+  // A landed merge moves the mission to a terminal status (Batch 10), so the
+  // list is stale the moment the gate settles, not just the open mission.
+  const onSettled = useCallback(() => {
+    void loadList()
+    if (selectedId) void loadMission(selectedId)
+  }, [loadList, loadMission, selectedId])
 
   return (
     <WorkspaceShell
@@ -292,75 +240,10 @@ export function MissionsWorkspace({ embedded = false }: { embedded?: boolean }) 
           {selected && tasks.length === 0 && (
             <p className="font-mono text-xs text-muted-foreground">no tasks on this mission</p>
           )}
-          {/* ── Approval gate (Batch 7) ──────────────────────────
-              Each task lands as its own branch, so what is being approved
-              is a fan-out, not one diff. Conflicts between two task
-              branches are normal here and are shown as blocking. */}
-          {selected && (approval || approvalError) && (
-            <div className={`mb-4 px-4 py-4 ${WORKSPACE_INSET_CLASS}`}>
-              <div className="flex items-center justify-between gap-4">
-                <span className="font-mono text-[10px] uppercase tracking-wider text-warning">
-                  approval gate{approval ? ` · target ${approval.targetBranch}` : ''}
-                </span>
-                {approval && approval.tasks.some((t) => t.decision === 'pending' && t.branchExists) && (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      disabled={approvalBusy}
-                      onClick={() => void act('approve')}
-                      className="rounded-lg bg-primary/10 px-3 py-1.5 font-mono text-[10px] leading-4 text-primary shadow-sm ring-1 ring-primary/15 hover:bg-primary/15 disabled:opacity-40"
-                    >
-                      {approvalBusy ? 'merging…' : 'approve + merge'}
-                    </button>
-                    <button
-                      disabled={approvalBusy}
-                      onClick={() => void act('reject')}
-                      className="rounded-lg bg-surface-secondary px-3 py-1.5 font-mono text-[10px] leading-4 text-muted-foreground shadow-sm ring-1 ring-foreground/10 hover:text-red-400 disabled:opacity-40"
-                    >
-                      reject
-                    </button>
-                  </div>
-                )}
-              </div>
-              {approvalError && (
-                <p className="mt-1.5 font-mono text-[10px] text-muted-foreground">{approvalError}</p>
-              )}
-              {approval?.tasks.filter((t) => t.decision !== 'merged').map((t) => (
-                <div key={t.branch} className="mt-3 border-t border-border/30 pt-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <button
-                      onClick={() => setOpenDiffId(openDiffId === t.task.id ? null : t.task.id)}
-                      className="flex-1 text-left font-mono text-[10px] text-foreground hover:text-primary"
-                    >
-                      {openDiffId === t.task.id ? '▾' : '▸'} {t.task.title}
-                      <span className="ml-1.5 text-muted-foreground">
-                        {t.branchExists
-                          ? `+${t.insertions}/-${t.deletions} · ${t.files.length} file${t.files.length === 1 ? '' : 's'}`
-                          : 'branch missing — work not recoverable'}
-                      </span>
-                    </button>
-                    <StatusBadge
-                      label={t.decision}
-                      tone={
-                        t.decision === 'conflicted'
-                          ? 'danger'
-                          : t.decision === 'rejected'
-                            ? 'neutral'
-                            : t.decision === 'approved'
-                              ? 'primary'
-                              : 'warning'
-                      }
-                    />
-                  </div>
-                  {openDiffId === t.task.id && t.patch && (
-                    <pre className="mt-2 max-h-72 overflow-auto rounded-xl bg-surface-base p-3 font-mono text-[10px] leading-relaxed text-muted-foreground shadow-sm ring-1 ring-foreground/5">
-                      {t.patch}
-                      {t.patchTruncated ? '\n… truncated' : ''}
-                    </pre>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+          {/* Each task lands as its own branch, so what is being approved is a
+              fan-out, not one diff. Shared with the Command tab since Batch 10
+              — one approve button over one owner-gated route. */}
+          {selected && <ApprovalGate missionId={selected.id} pollMs={POLL_MS} onSettled={onSettled} />}
 
           <div className="flex flex-col gap-3">
             {selected &&

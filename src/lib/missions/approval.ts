@@ -122,6 +122,41 @@ function decisionsFromEvents(events: Awaited<ReturnType<typeof listEvents>>): Ma
 }
 
 /**
+ * Close a mission once no task on it is still waiting on Henry.
+ *
+ * Batch 10. Before the front door existed nothing depended on a mission ever
+ * reaching a terminal status, so approving a wave landed the code and left the
+ * mission `awaiting_approval` forever. createMission allows one active mission
+ * per repo, and `awaiting_approval` is not terminal — so a landed, finished
+ * mission still held the repo and the next one was refused at the door.
+ *
+ * The status is read off the decisions rather than the caller's intent: a
+ * caller that approved 2 of 5 tasks has not finished the mission, and only the
+ * log knows that. Nothing merged means nothing landed, which is `cancelled` —
+ * every branch is still on disk (rejectTasks keeps them), so this is a
+ * released repo, not discarded work.
+ */
+async function releaseIfDecided(missionId: string): Promise<void> {
+  const [tasks, events] = await Promise.all([listTasks(missionId), listEvents(missionId, 500)])
+  const decisions = decisionsFromEvents(events)
+  const outstanding = tasks.filter((t) => {
+    const d = decisions.get(t.id) ?? 'pending'
+    return d === 'pending' || d === 'approved' || d === 'conflicted'
+  })
+  if (tasks.length === 0 || outstanding.length > 0) return
+
+  const landed = tasks.some((t) => decisions.get(t.id) === 'merged')
+  await updateMissionStatus(missionId, landed ? 'completed' : 'cancelled', {
+    by: 'approval',
+    decided: tasks.length,
+    merged: tasks.filter((t) => decisions.get(t.id) === 'merged').length,
+    ...(landed ? {} : { reason: 'every task was rejected — branches kept, repo released' }),
+  }).catch(() => {
+    /* the approval itself already succeeded; a stuck status must not undo it */
+  })
+}
+
+/**
  * Everything awaiting a human on this mission, with real diffs.
  *
  * The diff is computed against the target branch rather than the task's own
@@ -436,6 +471,8 @@ export async function approveAndMerge(
       await git(`git branch -D ${shq(m.branch)} 2>/dev/null || true`, repoRoot, 'cleanup')
     }
 
+    await releaseIfDecided(missionId)
+
     return {
       missionId, targetBranch, targetBefore, targetAfter: stageSha,
       merged, conflicts: [], landed: true, error: null,
@@ -491,6 +528,7 @@ export async function rejectTasks(
     )
     rejected.push({ taskId, branch, kept })
   }
+  await releaseIfDecided(missionId)
   return { missionId, rejected }
 }
 
