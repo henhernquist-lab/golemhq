@@ -452,6 +452,40 @@ export async function updateTaskStatus(
   return toTask(data as unknown as TaskRow)
 }
 
+/**
+ * Set a task's builder without moving its status.
+ *
+ * Batch 11 writes the approved assignment at the plan gate, before anything is
+ * dispatched, so the task has to stay `pending` — it is the Scheduler's job to
+ * move it to `assigned`, and pre-empting that would make an unrun task look
+ * claimed to every reader of the roster.
+ *
+ * updateTaskStatus is the wrong tool for this even though it can carry
+ * assignedAgent: called with the status the task already has, it records a
+ * task.status_changed event reading `pending → pending`, which is noise in the
+ * one log the whole pipeline is audited from.
+ */
+export async function assignTaskAgent(taskId: string, agentId: string): Promise<Task> {
+  const previous = await getTask(taskId)
+  if (!previous) throw new MissionStoreError(`assignTaskAgent: task ${taskId} not found`)
+
+  const { data, error } = await supabase
+    .from('tasks')
+    .update({ assigned_agent: agentId })
+    .eq('id', taskId)
+    .select(taskColumns())
+    .single()
+  if (error) fail('assignTaskAgent', error)
+
+  await recordEvent(
+    previous.missionId,
+    'task.agent_assigned',
+    { from: previous.assignedAgent, to: agentId },
+    taskId,
+  )
+  return toTask(data as unknown as TaskRow)
+}
+
 // ── Results ───────────────────────────────────────────────────────────
 
 /**

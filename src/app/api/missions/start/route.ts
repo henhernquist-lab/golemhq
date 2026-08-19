@@ -21,6 +21,7 @@ import { resolveResourceUserId } from '@/lib/resource-user'
 import { readRequestJson } from '@/lib/request-json'
 import { createMission, listTasks, MissionStoreError } from '@/lib/missions/store'
 import { planMission, PlannerError, BudgetExceededError } from '@/lib/missions/planner'
+import { enterPlanGate } from '@/lib/missions/plan-approval'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -56,13 +57,33 @@ export async function POST(req: Request) {
     const mission = await createMission(targetRepo, goal.trim(), createdBy)
     missionId = mission.id
 
-    const planned = await planMission(mission.id, { cwd })
+    // Batch 11: the plan stops here. Before this it landed on 'running', which
+    // the dispatch route acts on — so the only thing between a drafted graph
+    // and real CLIs editing a real checkout was a button not yet pressed, and
+    // any other caller reading the row would have seen a mission claiming to
+    // run while nothing did.
+    // Annotated rather than inferred: assigned only inside the callback, which
+    // control-flow analysis does not follow, so an inferred `false` narrows to
+    // the literal type and the read below stops compiling.
+    let planGateMigrationApplied: boolean = false
+    const planned = await planMission(mission.id, {
+      cwd,
+      finalize: async (missionId, taskCount) => {
+        const gated = await enterPlanGate(missionId, { plannedTasks: taskCount })
+        planGateMigrationApplied = gated.migrationApplied
+        return gated.mission
+      },
+    })
     const tasks = await listTasks(mission.id)
 
     return Response.json({
-      mission: { ...mission, status: 'running' },
+      mission: planned.mission,
       tasks,
       usage: planned.usage,
+      // False means the mission is parked on 'planning' instead, because
+      // PLAN_GATE_MIGRATION has not been applied. The gate holds either way;
+      // the caller is told which so it can say so rather than guess.
+      planGateMigrationApplied,
     })
   } catch (err) {
     // Every failure mode here is one a human needs the reason for: an active

@@ -176,6 +176,18 @@ export interface PlanMissionOptions {
    * there or planning falls back to no context.
    */
   cwd?: string
+  /**
+   * Run instead of the default `updateMissionStatus(id, 'running')` once the
+   * graph is written.
+   *
+   * Batch 11's gate parks the mission somewhere that is not dispatchable rather
+   * than letting it land on 'running'. Done here, inside the same function that
+   * wrote the tasks, because the alternative — the caller moving it afterwards
+   * — leaves a window where a fully planned mission is already dispatchable and
+   * nothing has approved it. The default keeps every existing caller
+   * (scripts/verify-*.mjs among them) on exactly the Batch 3 behaviour.
+   */
+  finalize?: (missionId: string, taskCount: number) => Promise<Mission>
 }
 
 /**
@@ -338,9 +350,11 @@ export async function planMission(
     ...totals,
   })
 
-  const running = await updateMissionStatus(missionId, 'running', { plannedTasks: created.length })
+  const settled = options.finalize
+    ? await options.finalize(missionId, created.length)
+    : await updateMissionStatus(missionId, 'running', { plannedTasks: created.length })
   return {
-    mission: running,
+    mission: settled,
     tasks: created,
     modelId,
     attempts,

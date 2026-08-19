@@ -18,6 +18,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Loader2, Rocket, Send, AlertCircle, Play, XCircle } from 'lucide-react'
 
 import { ApprovalGate } from '@/components/missions/approval-gate'
+import { PlanGate } from '@/components/missions/plan-gate'
 import { WorkspaceShell, WORKSPACE_CARD_CLASS, WORKSPACE_INSET_CLASS } from '@/components/workspace/workspace-shell'
 import { StatusBadge, type BadgeTone } from '@/components/workspace/status-badge'
 import type { Mission, Task, MissionEvent, TaskStatus, MissionStatus } from '@/lib/missions/types'
@@ -40,6 +41,7 @@ const TASK_TONE: Record<TaskStatus, BadgeTone> = {
 
 const MISSION_TONE: Record<MissionStatus, BadgeTone> = {
   planning: 'neutral',
+  awaiting_plan_approval: 'warning',
   awaiting_approval: 'warning',
   running: 'primary',
   completed: 'primaryStrong',
@@ -57,6 +59,13 @@ function describe(event: MissionEvent): string | null {
     case 'planner.usage': return `planner spent ${p.totalTokens ?? '?'} tokens · $${Number(p.costUsd ?? 0).toFixed(4)}`
     case 'task.created': return `task queued: ${p.title ?? ''}`
     case 'planner.completed': return `plan ready — ${p.taskCount ?? '?'} tasks`
+    // Batch 11's gate. Without these the feed goes silent across the one
+    // decision that authorises every CLI run below it.
+    case 'plan.gate_degraded': return `plan gate holding at "${p.holding}" — ${p.migration} not applied`
+    case 'task.agent_assigned': return `builder pinned at the gate`
+    case 'plan.approved':
+      return `plan approved — ${p.taskCount ?? '?'} tasks${Number(p.reassigned) > 0 ? `, ${p.reassigned} reassigned` : ''}`
+    case 'scheduler.assignment_unavailable': return `approved builder unavailable: ${String(p.error ?? '').slice(0, 90)}`
     case 'mission.status_changed': return `mission ${p.from} → ${p.to}`
     case 'coordinator.leases_acquired': {
       const leases = Array.isArray(p.leases) ? p.leases : []
@@ -278,6 +287,12 @@ export function HeadAgent({ embedded = false }: { embedded?: boolean }) {
       <AnimatePresence>
         {mission && (
           <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+            {/* Two gates, opposite ends of the same mission. This one holds a
+                drafted plan before any CLI is spawned and shows which builder
+                each task would go to; the one below holds finished branches
+                before they are merged. Each renders only in its own state. */}
+            <PlanGate missionId={mission.id} pollMs={POLL_MS} onSettled={refresh} />
+
             {/* The mission's last step is a human one. Before Batch 10 this
                 surface ended at dispatch and the work sat on unmerged branches
                 a tab away, so "done" here never meant anything had landed. */}
@@ -296,7 +311,7 @@ export function HeadAgent({ embedded = false }: { embedded?: boolean }) {
                     title={
                       mission.status === 'running'
                         ? 'Hand the graph to the Scheduler — real builder CLIs, real checkout'
-                        : `Mission is "${mission.status}" — only a planned mission can be dispatched`
+                        : `Mission is "${mission.status}" — approve the plan above before it can be dispatched`
                     }
                     className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 px-2.5 py-1.5 font-mono text-[11px] leading-4 text-primary shadow-sm ring-1 ring-primary/20 transition-colors hover:bg-primary/20 disabled:opacity-40"
                   >

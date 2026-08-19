@@ -211,7 +211,7 @@ function scoreAgent(agent: Agent, taskWords: Set<string>): { score: number; matc
   return { score: matched.length, matched }
 }
 
-function pickAgent(task: Task, candidates: Agent[]): { agent: Agent; rationale: string } {
+export function pickAgent(task: Task, candidates: Agent[]): { agent: Agent; rationale: string } {
   const words = new Set(`${task.title} ${task.description}`.toLowerCase().match(WORD) ?? [])
 
   let best: { agent: Agent; score: number; matched: string[] } | null = null
@@ -235,6 +235,24 @@ function pickAgent(task: Task, candidates: Agent[]): { agent: Agent; rationale: 
 }
 
 /**
+ * Which builder runs this task: the one approved at the Batch 11 plan gate if
+ * there is one, otherwise the Scheduler's own pick.
+ *
+ * `null` means the task carries an approved assignment that this host cannot
+ * honour. Falling back to pickAgent there would be the worst option available —
+ * the whole point of the gate is that Henry saw which CLI was going to run and
+ * said yes to that one, so quietly substituting another makes the approval a
+ * decoration. The caller fails the task instead, which is visible.
+ */
+function decideAgent(task: Task, candidates: Agent[]): { agent: Agent; rationale: string } | null {
+  if (task.assignedAgent) {
+    const approved = candidates.find((a) => a.id === task.assignedAgent)
+    return approved ? { agent: approved, rationale: 'assigned at the plan gate' } : null
+  }
+  return pickAgent(task, candidates)
+}
+
+/**
  * Enabled layer-2 agents that can actually run here.
  *
  * `enabled` alone is not enough. Codex sat enabled for two batches while being
@@ -247,7 +265,7 @@ function pickAgent(task: Task, candidates: Agent[]): { agent: Agent; rationale: 
  * is not the same as known-absent, and excluding them would make the scheduler
  * silently depend on someone having run detection first.
  */
-async function dispatchableAgents(): Promise<{ agents: Agent[]; warning: string | null }> {
+export async function dispatchableAgents(): Promise<{ agents: Agent[]; warning: string | null }> {
   const enabled = await listAgents(2, true)
   if (enabled.length === 0) throw new SchedulerError('no enabled layer-2 agents to dispatch to')
 
@@ -438,6 +456,8 @@ export async function scheduleTasks(
   const { agents: candidates, warning } = await dispatchableAgents()
 
   const scheduled: ScheduledTask[] = []
+  // Tasks this run cannot honour — see the assignment_unavailable branch.
+  const stalled = new Set<string>()
   let deferred = 0
   let conflicted = 0
   let reaped = 0
@@ -448,7 +468,7 @@ export async function scheduleTasks(
   for (;;) {
     const tasks = await listTasks(missionId)
     const byId = new Map(tasks.map((t) => [t.id, t]))
-    const ready = tasks.filter((t) => isReady(t, byId, satisfiedBy))
+    const ready = tasks.filter((t) => isReady(t, byId, satisfiedBy) && !stalled.has(t.id))
     if (ready.length === 0) break
 
     if (scheduled.length >= maxTasks) {
@@ -489,10 +509,25 @@ export async function scheduleTasks(
     // claimed rather than one task at a time.
     const wave: { task: Task; agent: Agent; rationale: string }[] = []
     for (const { task } of plan.admitted) {
-      const { agent, rationale } = pickAgent(task, candidates)
+      const decided = decideAgent(task, candidates)
+      if (!decided) {
+        // The gate approved a builder that is not dispatchable here — disabled,
+        // or detection found it absent on this host since the approval.
+        const error = `the builder approved at the plan gate (${task.assignedAgent}) is not dispatchable on "${backend().kind}"`
+        await releaseLeases(task.id).catch(() => {})
+        // Remembered as well as written: if the status write is what failed,
+        // the task stays `pending` and the next pass would admit it, fail it
+        // and loop here forever.
+        stalled.add(task.id)
+        await updateTaskStatus(task.id, 'failed', { by: 'scheduler', error }).catch(() => {})
+        await recordEvent(missionId, 'scheduler.assignment_unavailable', { error }, task.id)
+        continue
+      }
+      const { agent, rationale } = decided
       await updateTaskStatus(task.id, 'assigned', { assignedAgent: agent.id, rationale, by: 'scheduler' })
       wave.push({ task, agent, rationale })
     }
+    if (wave.length === 0) continue
 
     if (options.dryRun) {
       for (const { task, agent, rationale } of wave) {

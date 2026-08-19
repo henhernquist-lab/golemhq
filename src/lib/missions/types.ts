@@ -39,6 +39,14 @@ export interface Agent {
 
 export type MissionStatus =
   | 'planning'
+  /**
+   * Batch 11: the plan is drafted and waiting on a human. Distinct from
+   * 'awaiting_approval', which is Batch 7/10's gate over finished task branches
+   * — this one guards the opposite end, before any builder has been spawned.
+   * Needs supabase/migrations/20260819010000_batch11_plan_approval.sql; see
+   * plan-approval.ts for what happens when that has not been applied.
+   */
+  | 'awaiting_plan_approval'
   | 'running'
   | 'awaiting_approval'
   | 'completed'
@@ -52,6 +60,7 @@ export type MissionStatus =
  */
 export const ACTIVE_MISSION_STATUSES: MissionStatus[] = [
   'planning',
+  'awaiting_plan_approval',
   'running',
   'awaiting_approval',
 ]

@@ -1,0 +1,27 @@
+// Scoped typecheck for Batch 11's changed files.
+//
+// The whole-project `tsc --noEmit` gets SIGTERM'd in this container regardless
+// of heap size (see CLAUDE.md), so the roots are narrowed to the files this
+// batch touched. TypeScript still follows every import out of them, so the
+// modules they depend on are checked too — what is skipped is the rest of the
+// app, which this batch did not change.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": [
+    "next-env.d.ts",
+    "src/lib/missions/plan-approval.ts",
+    "src/lib/missions/scheduler.ts",
+    "src/lib/missions/planner.ts",
+    "src/lib/missions/store.ts",
+    "src/lib/missions/types.ts",
+    "src/components/missions/plan-gate.tsx",
+    "src/components/missions/head-agent.tsx",
+    "src/components/missions/missions-workspace.tsx",
+    "src/app/api/missions/start/route.ts",
+    "src/app/api/missions/[id]/plan/route.ts",
+    "src/app/api/missions/[id]/plan/approve/route.ts"
+  ]
+}

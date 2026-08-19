@@ -79,6 +79,7 @@ const TASK_TONE: Record<TaskStatus, BadgeTone> = {
 
 const MISSION_TONE: Record<MissionStatus, BadgeTone> = {
   planning: 'neutral',
+  awaiting_plan_approval: 'warning',
   awaiting_approval: 'warning',
   running: 'primary',
   completed: 'primaryStrong',
