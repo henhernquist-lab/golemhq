@@ -19,7 +19,7 @@
 import { requireHenryOwner } from '@/lib/auth-owner'
 import { resolveResourceUserId } from '@/lib/resource-user'
 import { readRequestJson } from '@/lib/request-json'
-import { createMission, listTasks, MissionStoreError } from '@/lib/missions/store'
+import { createMission, listTasks, MissionStoreError, updateMissionStatus } from '@/lib/missions/store'
 import { planMission, PlannerError, BudgetExceededError } from '@/lib/missions/planner'
 import { enterPlanGate } from '@/lib/missions/plan-approval'
 
@@ -86,6 +86,20 @@ export async function POST(req: Request) {
       planGateMigrationApplied,
     })
   } catch (err) {
+    // Ported from the parallel Batch 11 (feat/batch-11-plan-gate): the mission
+    // row is created before the Planner runs, so a planner failure leaves it at
+    // an ACTIVE status holding the repo with no tasks and no UI affordance —
+    // the same door-jam Batch 9 fixed for completion. Observed live: a transient
+    // provider 502 orphaned a mission and blocked the next start with a 409
+    // naming a mission nobody meant to create. The budget path marks the mission
+    // failed itself; this covers the rest. Best effort — the response below is
+    // what the caller acts on.
+    if (missionId && !(err instanceof BudgetExceededError)) {
+      await updateMissionStatus(missionId, 'failed', {
+        reason: err instanceof Error ? err.message : 'planning failed',
+      }).catch(() => {})
+    }
+
     // Every failure mode here is one a human needs the reason for: an active
     // mission already holds this repo, the spend cap is breached, or the model
     // would not produce a valid graph. A bare 500 loses all three.
